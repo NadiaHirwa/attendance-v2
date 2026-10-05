@@ -247,7 +247,7 @@ def save_attendance_table(connection, session_id, table):
     for index, row in table.iterrows():
         status = row["status"]
 
-        # A blank status saves nothing. Records cannot be deleted, so if the
+        # A blank status saves nothing. Clearing a cell does not delete, so if the
         # student already had a saved status, that status is kept.
         if status not in STATUS_OPTIONS:
             saved_status = database.get_status(connection, row["student_id"], session_id)
@@ -277,7 +277,7 @@ def show_save_result(counts):
     if counts["cleared"] > 0:
         st.warning(
             f"{counts['cleared']} saved status(es) were cleared on screen but kept. "
-            "Records cannot be deleted in this version."
+            "To delete a record, use Manage Attendance > Edit & Delete."
         )
 
     if counts["not_enrolled"] > 0:
@@ -351,6 +351,289 @@ def show_session_counts(connection, session_id):
         f"Attendance rate {analytics.format_rate(rates['attendance_rate'])}, "
         f"completeness {analytics.format_rate(rates['completeness'])}."
     )
+
+
+# ---------- FR-22 and FR-23: rename and delete ----------
+
+def finish_edit(message):
+    """Remember a success message and rerun, so every list on the page is up to date."""
+    st.session_state["edit_message"] = message
+    st.rerun()
+
+
+def show_edit_message():
+    """Show the message of the last rename or delete once, then forget it."""
+    message = st.session_state.pop("edit_message", None)
+    if message is not None:
+        st.success(message)
+
+
+def ask_to_confirm(key):
+    """Show the 'cannot be undone' checkbox and a Delete button that works only when ticked.
+
+    The key includes the item's ID, so the box starts unticked for every new item.
+    """
+    understood = st.checkbox("I understand this cannot be undone", key=f"understand_{key}")
+    return st.button("Delete", type="primary", disabled=not understood, key=f"delete_{key}")
+
+
+def describe_counts(counts):
+    """Return text like '3 attendance record(s), 1 enrollment(s)' for a dict of counts."""
+    names = {
+        "attendance": "attendance record(s)",
+        "enrollments": "enrollment(s)",
+        "students": "student(s)",
+        "sessions": "session(s)",
+        "courses": "course(s)",
+    }
+    parts = []
+    for key in counts:
+        parts.append(f"{counts[key]} {names[key]}")
+    return ", ".join(parts)
+
+
+def show_rename_student(connection):
+    """Change a student's name with the same rules as Add Student (FR-22)."""
+    st.subheader("Rename a student")
+
+    student_choices = get_student_choices(connection)
+    if not student_choices:
+        st.info(NO_STUDENTS_MESSAGE)
+        return
+
+    student_label = st.selectbox("Student", list(student_choices), key="rename_student")
+    student_id = student_choices[student_label]
+    current_name = database.get_student(connection, student_id)["full_name"]
+
+    with st.form("rename_student_form"):
+        name_text = st.text_input(
+            "New full name", value=current_name, key=f"rename_student_name_{student_id}"
+        )
+        confirm_same_name = st.checkbox("I confirm this is a different student with the same name")
+        submitted = st.form_submit_button("Rename student")
+
+    if not submitted:
+        return
+
+    new_name = validation.clean_name(name_text)
+    if not validation.is_valid_name(new_name):
+        st.error(validation.NAME_ERROR)
+        return
+
+    if new_name == current_name:
+        st.info(validation.NO_CHANGE_MESSAGE.format("name"))
+        return
+
+    # Same-name warning as Add Student, ignoring the student's own current name.
+    other_students = []
+    for student in database.find_students_by_name(connection, new_name):
+        if student["student_id"] != student_id:
+            other_students.append(student)
+
+    if other_students and not confirm_same_name:
+        first_match = other_students[0]
+        st.warning(validation.DUPLICATE_NAME_WARNING.format(
+            first_match["full_name"], first_match["student_id"]
+        ))
+        return
+
+    database.rename_student(connection, student_id, new_name)
+    finish_edit(f"Student {student_id} renamed from {current_name} to {new_name}.")
+
+
+def show_rename_course(connection):
+    """Change a course's name. The course code stays the same (FR-22)."""
+    st.subheader("Rename a course")
+
+    course_choices = get_course_choices(connection)
+    if not course_choices:
+        st.info(NO_COURSES_MESSAGE)
+        return
+
+    course_label = st.selectbox("Course", list(course_choices), key="rename_course")
+    course_code = course_choices[course_label]
+    current_name = database.get_course_name(connection, course_code)
+
+    with st.form("rename_course_form"):
+        name_text = st.text_input(
+            "New course name", value=current_name, key=f"rename_course_name_{course_code}"
+        )
+        submitted = st.form_submit_button("Rename course")
+
+    if not submitted:
+        return
+
+    new_name = validation.clean_course_name(name_text)
+    if new_name is None:
+        st.error(validation.COURSE_NAME_ERROR)
+    elif new_name == current_name:
+        st.info(validation.NO_CHANGE_MESSAGE.format("course name"))
+    else:
+        database.rename_course(connection, course_code, new_name)
+        finish_edit(f"Course {course_code} renamed from {current_name} to {new_name}.")
+
+
+def show_delete_attendance_record(connection):
+    """Delete one saved attendance record; the student becomes Unknown (FR-23)."""
+    st.subheader("Delete one attendance record")
+
+    course_choices = get_course_choices(connection)
+    if not course_choices:
+        st.info(NO_COURSES_MESSAGE)
+        return
+
+    course_label = st.selectbox("Course", list(course_choices), key="delete_record_course")
+    session_choices = get_session_choices(connection, course_choices[course_label])
+    if not session_choices:
+        st.info("This course has no sessions.")
+        return
+
+    session_label = st.selectbox("Session", list(session_choices), key="delete_record_session")
+    session_id = session_choices[session_label]
+
+    # Only students with a saved record can have it deleted.
+    record_choices = {}
+    for record in database.get_session_attendance(connection, session_id):
+        if record["status"] is not None:
+            label = f"{record['student_id']} - {record['full_name']} ({record['status']})"
+            record_choices[label] = record["student_id"]
+
+    if not record_choices:
+        st.info("No saved attendance records in this session.")
+        return
+
+    record_label = st.selectbox("Student", list(record_choices), key="delete_record_student")
+    student_id = record_choices[record_label]
+
+    st.warning(
+        f"This will remove 1 attendance record: {record_label} in {session_id}. "
+        "The student becomes Unknown for that session."
+    )
+    if ask_to_confirm(f"record_{session_id}_{student_id}"):
+        counts = database.delete_attendance_record(connection, student_id, session_id)
+        finish_edit(f"Deleted {describe_counts(counts)} for {student_id} in {session_id}.")
+
+
+def show_unenroll_student(connection):
+    """Un-enroll a student from one course, with their records for it (FR-23)."""
+    st.subheader("Un-enroll a student from a course")
+
+    student_choices = get_student_choices(connection)
+    if not student_choices:
+        st.info(NO_STUDENTS_MESSAGE)
+        return
+
+    student_label = st.selectbox("Student", list(student_choices), key="unenroll_student")
+    student_id = student_choices[student_label]
+
+    course_codes = []
+    for course in database.get_student_courses(connection, student_id):
+        course_codes.append(course["course_code"])
+
+    if not course_codes:
+        st.info(f"{student_label} is not enrolled in any course.")
+        return
+
+    course_code = st.selectbox("Course", course_codes, key="unenroll_course")
+    counts = database.count_unenroll(connection, student_id, course_code)
+
+    st.warning(
+        f"This will remove {describe_counts(counts)}: {student_label} leaves {course_code} "
+        f"and their records for {course_code} sessions are deleted."
+    )
+    if ask_to_confirm(f"unenroll_{student_id}_{course_code}"):
+        counts = database.unenroll_student(connection, student_id, course_code)
+        finish_edit(
+            f"Un-enrolled {student_id} from {course_code}: removed {describe_counts(counts)}."
+        )
+
+
+def show_delete_student(connection):
+    """Delete a student with all their enrollments and records (FR-23)."""
+    st.subheader("Delete a student")
+
+    student_choices = get_student_choices(connection)
+    if not student_choices:
+        st.info(NO_STUDENTS_MESSAGE)
+        return
+
+    student_label = st.selectbox("Student", list(student_choices), key="delete_student")
+    student_id = student_choices[student_label]
+    counts = database.count_delete_student(connection, student_id)
+
+    st.warning(
+        f"This will remove {describe_counts(counts)}: {student_label} and everything "
+        "recorded for them. The ID can be used again afterwards."
+    )
+    if ask_to_confirm(f"student_{student_id}"):
+        counts = database.delete_student(connection, student_id)
+        finish_edit(f"Deleted student {student_label}: removed {describe_counts(counts)}.")
+
+
+def show_delete_session(connection):
+    """Delete a session and its attendance records (FR-23)."""
+    st.subheader("Delete a session")
+
+    course_choices = get_course_choices(connection)
+    if not course_choices:
+        st.info(NO_COURSES_MESSAGE)
+        return
+
+    course_label = st.selectbox("Course", list(course_choices), key="delete_session_course")
+    session_choices = get_session_choices(connection, course_choices[course_label])
+    if not session_choices:
+        st.info("This course has no sessions.")
+        return
+
+    session_label = st.selectbox("Session", list(session_choices), key="delete_session")
+    session_id = session_choices[session_label]
+    counts = database.count_delete_session(connection, session_id)
+
+    st.warning(f"This will remove {describe_counts(counts)}: {session_label} and its records.")
+    if ask_to_confirm(f"session_{session_id}"):
+        counts = database.delete_session(connection, session_id)
+        finish_edit(f"Deleted session {session_id}: removed {describe_counts(counts)}.")
+
+
+def show_delete_course(connection):
+    """Delete a course, only when no sessions or students use it (FR-23)."""
+    st.subheader("Delete a course")
+
+    course_choices = get_course_choices(connection)
+    if not course_choices:
+        st.info(NO_COURSES_MESSAGE)
+        return
+
+    course_label = st.selectbox("Course", list(course_choices), key="delete_course")
+    course_code = course_choices[course_label]
+    session_count, student_count = database.get_course_usage(connection, course_code)
+
+    if session_count > 0 or student_count > 0:
+        st.error(validation.COURSE_IN_USE_ERROR.format(course_code, session_count, student_count))
+        return
+
+    st.warning(f"This will remove 1 course: {course_label}. No sessions or students use it.")
+    if ask_to_confirm(f"course_{course_code}"):
+        counts = database.delete_course(connection, course_code)
+        finish_edit(f"Deleted course {course_code}: removed {describe_counts(counts)}.")
+
+
+def show_edit_and_delete(connection):
+    """Show every rename and delete section (FR-22, FR-23)."""
+    show_edit_message()
+    show_rename_student(connection)
+    st.divider()
+    show_rename_course(connection)
+    st.divider()
+    show_delete_attendance_record(connection)
+    st.divider()
+    show_unenroll_student(connection)
+    st.divider()
+    show_delete_student(connection)
+    st.divider()
+    show_delete_session(connection)
+    st.divider()
+    show_delete_course(connection)
 
 
 # ---------- FR-09: search students ----------
@@ -869,8 +1152,8 @@ def show_single_student_report(student_id, student_label, filtered_records):
 
 def show_manage_tab(connection):
     """Show the Manage Attendance sections grouped into sub-tabs."""
-    students_tab, courses_tab, sessions_tab, record_tab = st.tabs(
-        ["Students", "Courses", "Sessions", "Record Attendance"]
+    students_tab, courses_tab, sessions_tab, record_tab, edit_tab = st.tabs(
+        ["Students", "Courses", "Sessions", "Record Attendance", "Edit & Delete"]
     )
 
     # Courses run first so a course created in this run already appears in the
@@ -891,6 +1174,9 @@ def show_manage_tab(connection):
 
     with record_tab:
         show_record_attendance(connection)
+
+    with edit_tab:
+        show_edit_and_delete(connection)
 
 
 def main():

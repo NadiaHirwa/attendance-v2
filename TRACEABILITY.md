@@ -2,8 +2,8 @@
 
 Each requirement in [ATTENDANCE_V2_SPEC.md](ATTENDANCE_V2_SPEC.md) with the function(s)
 that implement it and the test(s) or demo step that check it.
-Test names refer to methods in `tests/test_validation.py`, `tests/test_analytics.py`
-and `tests/test_importer.py`.
+Test names refer to methods in `tests/test_validation.py`, `tests/test_analytics.py`,
+`tests/test_importer.py` and `tests/test_database.py`.
 
 ## Data model (Section 3)
 
@@ -73,6 +73,8 @@ and `tests/test_importer.py`.
 | FR-19 Single student report | `app.show_reports_tab`, `app.show_single_student_report`, `app.show_summary_metrics`, `analytics.filter_student`, `analytics.summarize_frame`, `analytics.build_course_summary`, `analytics.build_student_history`, `analytics.format_summary_table`, `app.show_table_with_download` | `test_two_course_student_by_hand`, `test_course_breakdown_by_hand`, `test_all_three_statuses_by_hand`, `test_history_in_date_order_with_unknown`, `test_student_report_respects_filters`, `test_student_outside_filters_is_empty` |
 | FR-20 Recording status chart | `app.show_status_chart`, `analytics.build_status_chart_data`, `analytics.make_status_chart_long`, `analytics.keep_statuses`, `analytics.labels_need_year`, `analytics.make_session_label` | `test_status_chart_counts_add_up_to_enrolled`, `test_status_chart_by_hand`, `test_status_chart_same_labels_and_order_as_rate_chart`, `test_status_chart_keeps_unrecorded_session`, `test_status_chart_long_shape`, `test_status_chart_keep_statuses` |
 | FR-21 Absence alerts and streaks per course | `app.show_absence_alerts`, `app.show_single_student_report`, `analytics.build_streak_table`, `analytics.find_streak_alerts`, `analytics.find_last_absence_date`, `analytics.build_course_summary`, `analytics.calculate_streaks` | `test_seed_streaks_by_hand`, `test_seed_alerts_default`, `test_seed_alerts_sorted_highest_first`, `test_streaks_respect_filters`, `test_course_summary_has_streaks`, `test_empty_records_give_no_alerts` |
+| FR-22 Rename a student or course | `app.show_rename_student`, `app.show_rename_course`, `database.rename_student`, `database.rename_course`, `database.get_course_name`, `validation.clean_name`, `validation.is_valid_name`, `validation.clean_course_name` | `test_rename_student`, `test_rename_course`, `test_rename_values_are_validated`; manual demo step: "No change" and the same-name warning |
+| FR-23 Delete with confirmation | `app.show_delete_attendance_record`, `app.show_unenroll_student`, `app.show_delete_student`, `app.show_delete_session`, `app.show_delete_course`, `app.ask_to_confirm`, `database.delete_attendance_record`, `database.unenroll_student`, `database.delete_student`, `database.delete_session`, `database.delete_course`, `database.count_unenroll`, `database.count_delete_student`, `database.count_delete_session`, `database.get_course_usage` | `test_delete_present_record`, `test_delete_absent_record`, `test_unenroll_removes_course_records_only`, `test_unenroll_with_missing_record`, `test_delete_student_removes_everything`, `test_deleted_id_can_be_used_again`, `test_delete_session`, `test_refused_with_sessions_and_students`, `test_refused_with_only_a_student`, `test_refused_with_only_a_session`, `test_empty_course_is_deleted` |
 
 ## Non-functional requirements (Section 7)
 

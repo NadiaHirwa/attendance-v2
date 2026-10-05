@@ -81,6 +81,18 @@ def course_exists(connection, course_code):
     return row is not None
 
 
+def get_course_name(connection, course_code):
+    """Return the name of a course, or None if the code is not saved."""
+    row = connection.execute(
+        "SELECT course_name FROM courses WHERE course_code = ?",
+        (course_code,),
+    ).fetchone()
+
+    if row is None:
+        return None
+    return row["course_name"]
+
+
 def get_courses(connection):
     """Return all courses sorted by code."""
     return connection.execute(
@@ -299,6 +311,181 @@ def import_records(connection, records, source):
             )
 
     return len(records)
+
+
+# ---------- Rename (FR-22) ----------
+
+def rename_student(connection, student_id, full_name):
+    """Change a student's full name. The student ID never changes."""
+    connection.execute(
+        "UPDATE students SET full_name = ? WHERE student_id = ?",
+        (full_name, student_id),
+    )
+    connection.commit()
+
+
+def rename_course(connection, course_code, course_name):
+    """Change a course's name. The course code never changes."""
+    connection.execute(
+        "UPDATE courses SET course_name = ? WHERE course_code = ?",
+        (course_name, course_code),
+    )
+    connection.commit()
+
+
+# ---------- Delete (FR-23) ----------
+# Each count_... function says what the matching delete_... function would remove,
+# using the same keys, so the screen can show it before the user confirms.
+
+def count_rows(connection, query, parameters):
+    """Run a SELECT COUNT(*) query and return the number."""
+    return connection.execute(query, parameters).fetchone()[0]
+
+
+def count_course_attendance(connection, student_id, course_code):
+    """Return how many attendance records a student has in one course's sessions."""
+    return count_rows(
+        connection,
+        """
+        SELECT COUNT(*) FROM attendance
+        WHERE student_id = ?
+          AND session_id IN (SELECT session_id FROM sessions WHERE course_code = ?)
+        """,
+        (student_id, course_code),
+    )
+
+
+def count_unenroll(connection, student_id, course_code):
+    """Return what un-enrolling a student from a course would remove."""
+    return {
+        "attendance": count_course_attendance(connection, student_id, course_code),
+        "enrollments": 1,
+    }
+
+
+def count_delete_student(connection, student_id):
+    """Return what deleting a student would remove."""
+    return {
+        "attendance": count_rows(
+            connection, "SELECT COUNT(*) FROM attendance WHERE student_id = ?", (student_id,)
+        ),
+        "enrollments": count_rows(
+            connection, "SELECT COUNT(*) FROM enrollments WHERE student_id = ?", (student_id,)
+        ),
+        "students": 1,
+    }
+
+
+def count_delete_session(connection, session_id):
+    """Return what deleting a session would remove."""
+    return {
+        "attendance": count_rows(
+            connection, "SELECT COUNT(*) FROM attendance WHERE session_id = ?", (session_id,)
+        ),
+        "sessions": 1,
+    }
+
+
+def get_course_usage(connection, course_code):
+    """Return (number of sessions, number of enrolled students) of a course."""
+    session_count = count_rows(
+        connection, "SELECT COUNT(*) FROM sessions WHERE course_code = ?", (course_code,)
+    )
+    student_count = count_rows(
+        connection, "SELECT COUNT(*) FROM enrollments WHERE course_code = ?", (course_code,)
+    )
+    return session_count, student_count
+
+
+def delete_attendance_record(connection, student_id, session_id):
+    """Delete one attendance record, so the student becomes Unknown for that session."""
+    with connection:
+        cursor = connection.execute(
+            "DELETE FROM attendance WHERE student_id = ? AND session_id = ?",
+            (student_id, session_id),
+        )
+    return {"attendance": cursor.rowcount}
+
+
+def unenroll_student(connection, student_id, course_code):
+    """Un-enroll a student from a course and delete their records for its sessions.
+
+    Both deletes run in one transaction: either both happen or neither does.
+    """
+    with connection:
+        attendance_cursor = connection.execute(
+            """
+            DELETE FROM attendance
+            WHERE student_id = ?
+              AND session_id IN (SELECT session_id FROM sessions WHERE course_code = ?)
+            """,
+            (student_id, course_code),
+        )
+        enrollment_cursor = connection.execute(
+            "DELETE FROM enrollments WHERE student_id = ? AND course_code = ?",
+            (student_id, course_code),
+        )
+    return {
+        "attendance": attendance_cursor.rowcount,
+        "enrollments": enrollment_cursor.rowcount,
+    }
+
+
+def delete_student(connection, student_id):
+    """Delete a student with their attendance and enrollments, in one transaction.
+
+    The rows that point to the student go first, so the foreign keys stay valid.
+    Afterwards the student ID can be used again.
+    """
+    with connection:
+        attendance_cursor = connection.execute(
+            "DELETE FROM attendance WHERE student_id = ?", (student_id,)
+        )
+        enrollment_cursor = connection.execute(
+            "DELETE FROM enrollments WHERE student_id = ?", (student_id,)
+        )
+        student_cursor = connection.execute(
+            "DELETE FROM students WHERE student_id = ?", (student_id,)
+        )
+    return {
+        "attendance": attendance_cursor.rowcount,
+        "enrollments": enrollment_cursor.rowcount,
+        "students": student_cursor.rowcount,
+    }
+
+
+def delete_session(connection, session_id):
+    """Delete a session and its attendance records, in one transaction."""
+    with connection:
+        attendance_cursor = connection.execute(
+            "DELETE FROM attendance WHERE session_id = ?", (session_id,)
+        )
+        session_cursor = connection.execute(
+            "DELETE FROM sessions WHERE session_id = ?", (session_id,)
+        )
+    return {
+        "attendance": attendance_cursor.rowcount,
+        "sessions": session_cursor.rowcount,
+    }
+
+
+def delete_course(connection, course_code):
+    """Delete a course that has no sessions and no enrolled students.
+
+    Raises ValueError if anything still uses the course, so nothing is removed by accident.
+    """
+    session_count, student_count = get_course_usage(connection, course_code)
+    if session_count > 0 or student_count > 0:
+        raise ValueError(
+            f"Course {course_code} still has {session_count} session(s) and "
+            f"{student_count} enrolled student(s)."
+        )
+
+    with connection:
+        cursor = connection.execute(
+            "DELETE FROM courses WHERE course_code = ?", (course_code,)
+        )
+    return {"courses": cursor.rowcount}
 
 
 def get_session_attendance(connection, session_id):

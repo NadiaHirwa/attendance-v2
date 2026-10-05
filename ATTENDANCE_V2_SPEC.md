@@ -20,7 +20,7 @@ Version 2 records attendance for **several courses and sessions**, **saves it pe
 search, CSV import with validation, dashboard, reports, CSV downloads, SQLite storage.
 
 **Out of scope (Future Work):** login/roles, Late/Excused, enrollment start/end dates,
-conflict-resolution screens, import history tab, multi-file upload, deleting records,
+conflict-resolution screens, import history tab, multi-file upload,
 student self-service view (requires login and roles).
 
 ## 2. Assumptions
@@ -120,6 +120,8 @@ session_id,course_code,session_date,student_id,full_name,status
 | FR-19 | Reports | Single student report: choosing a student ("ID - Name") in the FR-16 selector replaces the All students view; using the course and date filters, show their Present, Absent, Unknown, attendance rate and completeness, a per-course breakdown when they are in more than one course, and their session history (session, course, date, status) in date order with missing records shown as Unknown. The history can be downloaded as CSV, matching the screen. |
 | FR-20 | Dashboard | Show a second chart below the FR-14 chart, "Recording status by session": one stacked bar per session with its Present (blue), Absent (orange) and Unknown (grey) counts, using the same filters, labels and session order as FR-14. Sessions with no records are included as all Unknown. Each bar's total equals the students enrolled in that session's course. |
 | FR-21 | Dashboard, Reports | **Absence alerts** (Dashboard, below the threshold list): a number input "Alert when current streak is at least" (default 2, minimum 1) lists every student and course whose current streak (BR-14) reaches it, with student ID, name, course, current streak, longest streak and date of last absence, highest current streak first. If nobody matches, a success message says so. In the Reports single-student view, the "By course" table (shown even for one course) adds the longest and current absence streak per course. |
+| FR-22 | Manage (Edit & Delete) | **Rename** a student's full name (BR-02 cleaning and validation, and the same-name warning with confirmation as in FR-04, ignoring the student's own name) or a course's name (BR-04). Student IDs and course codes never change. If the new value equals the old one, show "No change". |
+| FR-23 | Manage (Edit & Delete) | **Delete**, each in one database transaction that returns the counts removed: one attendance record (the student becomes Unknown for that session); an enrollment, with the student's records for that course's sessions; a student, with all their records and enrollments (the ID can be used again); a session, with its records; a course, only when it has no sessions and no enrolled students (otherwise an error says how many sessions and students must be removed first). Every delete first shows what will be removed, with counts, and the Delete button works only after ticking "I understand this cannot be undone". |
 
 ## 7. Non-functional requirements
 
@@ -157,7 +159,6 @@ attendance_v2/
 
 - Enrollment has no start date: a student who joins late shows Unknown for earlier sessions.
 - No login: anyone at the computer can change records.
-- Records cannot be deleted in the app.
 - Accented and unaccented names (`Émile` / `Emile`) are different.
 - Validation checks format and consistency, not truth.
 - A session ID is not tied to its course name: `PY101-W5` can be created for course DS102.

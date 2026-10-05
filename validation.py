@@ -38,6 +38,11 @@ COURSE_EXISTS_ERROR = "Course {} already exists. Enter a different course code."
 STUDENT_EXISTS_ERROR = "Student ID {} is already used. Enter a different student ID."
 SESSION_EXISTS_ERROR = "Session {} already exists. Session IDs must be unique across all courses."
 ALREADY_ENROLLED_ERROR = "Student {} is already enrolled in {}. Choose a different course."
+NO_CHANGE_MESSAGE = "No change: the new {} is the same as the current one."
+COURSE_IN_USE_ERROR = (
+    "Course {} cannot be deleted: it still has {} session(s) and {} enrolled student(s). "
+    "Delete those sessions and un-enroll those students first."
+)
 DUPLICATE_NAME_WARNING = (
     "A student named {} already exists (ID {}). If this is a different person, "
     "tick the confirmation box and submit again."

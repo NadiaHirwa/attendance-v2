@@ -1,0 +1,224 @@
+"""Tests for rename and delete in database.py (FR-22, FR-23).
+
+Every test loads the seed_demo.py data into a temporary in-memory database,
+never attendance.db. The expected counts were worked out by hand from seed_demo.py.
+"""
+
+import unittest
+
+import analytics
+import database
+import seed_demo
+import validation
+
+TEST_DB_PATH = ":memory:"
+
+# Each query counts rows that point to something that no longer exists.
+ORPHAN_QUERIES = [
+    """SELECT COUNT(*) FROM attendance
+       WHERE student_id NOT IN (SELECT student_id FROM students)
+          OR session_id NOT IN (SELECT session_id FROM sessions)""",
+    """SELECT COUNT(*) FROM enrollments
+       WHERE student_id NOT IN (SELECT student_id FROM students)
+          OR course_code NOT IN (SELECT course_code FROM courses)""",
+    """SELECT COUNT(*) FROM sessions
+       WHERE course_code NOT IN (SELECT course_code FROM courses)""",
+]
+
+
+class SeedDatabaseTestCase(unittest.TestCase):
+    """Base class: the seed data in an in-memory database. It has no tests itself."""
+
+    def setUp(self):
+        """Load the demo data."""
+        self.connection = seed_demo.reset_database(TEST_DB_PATH)
+        seed_demo.add_demo_data(self.connection)
+        seed_demo.add_demo_attendance(self.connection)
+
+    def tearDown(self):
+        """Close the database after each test."""
+        self.connection.close()
+
+    def count(self, query, parameters=()):
+        """Return the number from a SELECT COUNT(*) query."""
+        return self.connection.execute(query, parameters).fetchone()[0]
+
+    def assert_no_orphans(self):
+        """Check that no row points to a deleted student, session or course."""
+        for query in ORPHAN_QUERIES:
+            self.assertEqual(self.count(query), 0, query)
+
+    def dashboard_totals(self):
+        """Return the Dashboard metrics for All courses and the full date range."""
+        records = analytics.build_records_frame(database.get_expected_records(self.connection))
+        return analytics.calculate_dashboard_metrics(records)
+
+
+class TestRename(SeedDatabaseTestCase):
+
+    def test_rename_student(self):
+        """FR-22: the name changes and the student ID stays the same."""
+        new_name = validation.clean_name("  Jean-Paul   Mugisha-Habimana ")
+        self.assertTrue(validation.is_valid_name(new_name))
+
+        database.rename_student(self.connection, "002", new_name)
+
+        student = database.get_student(self.connection, "002")
+        self.assertEqual(student["full_name"], "Jean-Paul Mugisha-Habimana")
+        self.assertEqual(self.count("SELECT COUNT(*) FROM students"), 12)
+
+    def test_rename_course(self):
+        """FR-22: the course name changes and the code stays the same."""
+        new_name = validation.clean_course_name("  Python Programming ")
+        self.assertEqual(new_name, "Python Programming")
+
+        database.rename_course(self.connection, "PY101", new_name)
+
+        self.assertEqual(database.get_course_name(self.connection, "PY101"), new_name)
+        self.assertEqual(len(database.get_sessions_for_course(self.connection, "PY101")), 4)
+
+    def test_rename_values_are_validated(self):
+        """FR-22 (BR-02, BR-04): invalid new names are rejected before any update."""
+        self.assertFalse(validation.is_valid_name(validation.clean_name("-Nadia")))
+        self.assertIsNone(validation.clean_course_name("   "))
+        self.assertIsNone(validation.clean_course_name("A" * 81))
+
+
+class TestDeleteAttendanceRecord(SeedDatabaseTestCase):
+
+    def test_delete_present_record(self):
+        """FR-23: deleting 001's Present in PY101-W1 gives 62 Present, 9 Absent, 5 Unknown.
+
+        By hand: 63 - 1 = 62 Present; 4 + 1 = 5 Unknown; rate 62 / 71 = 87.32%;
+        completeness 71 / 76 = 93.42%.
+        """
+        counts = database.delete_attendance_record(self.connection, "001", "PY101-W1")
+
+        self.assertEqual(counts, {"attendance": 1})
+        self.assertIsNone(database.get_status(self.connection, "001", "PY101-W1"))
+
+        totals = self.dashboard_totals()
+        self.assertEqual((totals["present"], totals["absent"], totals["unknown"]), (62, 9, 5))
+        self.assertEqual(analytics.format_rate(totals["attendance_rate"]), "87.32%")
+        self.assertEqual(analytics.format_rate(totals["completeness"]), "93.42%")
+
+    def test_delete_absent_record(self):
+        """FR-23: deleting 002's Absent in PY101-W1 gives 63 Present, 8 Absent, 5 Unknown.
+
+        By hand: 9 - 1 = 8 Absent; rate 63 / 71 = 88.73%.
+        """
+        database.delete_attendance_record(self.connection, "002", "PY101-W1")
+
+        totals = self.dashboard_totals()
+        self.assertEqual((totals["present"], totals["absent"], totals["unknown"]), (63, 8, 5))
+        self.assertEqual(analytics.format_rate(totals["attendance_rate"]), "88.73%")
+
+
+class TestUnenroll(SeedDatabaseTestCase):
+
+    def test_unenroll_removes_course_records_only(self):
+        """FR-23: 004 leaves DS102: 4 DS102 records and 1 enrollment go; PY101 is untouched."""
+        preview = database.count_unenroll(self.connection, "004", "DS102")
+        counts = database.unenroll_student(self.connection, "004", "DS102")
+
+        self.assertEqual(counts, {"attendance": 4, "enrollments": 1})
+        self.assertEqual(counts, preview)
+        self.assertFalse(database.is_enrolled(self.connection, "004", "DS102"))
+        self.assertTrue(database.is_enrolled(self.connection, "004", "PY101"))
+        self.assertEqual(database.count_course_attendance(self.connection, "004", "PY101"), 4)
+        self.assertEqual(database.count_course_attendance(self.connection, "004", "DS102"), 0)
+        self.assert_no_orphans()
+
+    def test_unenroll_with_missing_record(self):
+        """FR-23: 012 has 3 DS102 records (DS102-W3 was never recorded), so 3 are removed."""
+        counts = database.unenroll_student(self.connection, "012", "DS102")
+
+        self.assertEqual(counts, {"attendance": 3, "enrollments": 1})
+        self.assert_no_orphans()
+
+
+class TestDeleteStudent(SeedDatabaseTestCase):
+
+    def test_delete_student_removes_everything(self):
+        """FR-23: 004 has 8 records (4 per course) and 2 enrollments; all are removed."""
+        preview = database.count_delete_student(self.connection, "004")
+        counts = database.delete_student(self.connection, "004")
+
+        self.assertEqual(counts, {"attendance": 8, "enrollments": 2, "students": 1})
+        self.assertEqual(counts, preview)
+        self.assertIsNone(database.get_student(self.connection, "004"))
+        self.assertEqual(self.count("SELECT COUNT(*) FROM attendance WHERE student_id = ?",
+                                    ("004",)), 0)
+        self.assert_no_orphans()
+
+    def test_deleted_id_can_be_used_again(self):
+        """FR-23: after deleting 004, a new student can be added with ID 004."""
+        database.delete_student(self.connection, "004")
+
+        database.add_student(self.connection, "004", "Alice Uwimana")
+        database.enroll_student(self.connection, "004", "PY101")
+
+        self.assertEqual(database.get_student(self.connection, "004")["full_name"],
+                         "Alice Uwimana")
+        # The new student has no old records: Unknown for all 4 PY101 sessions.
+        self.assertEqual(database.count_course_attendance(self.connection, "004", "PY101"), 0)
+
+
+class TestDeleteSession(SeedDatabaseTestCase):
+
+    def test_delete_session(self):
+        """FR-23: DS102-W3 has 7 records (9 enrolled, 008 and 012 missing); all are removed."""
+        preview = database.count_delete_session(self.connection, "DS102-W3")
+        counts = database.delete_session(self.connection, "DS102-W3")
+
+        self.assertEqual(counts, {"attendance": 7, "sessions": 1})
+        self.assertEqual(counts, preview)
+        self.assertIsNone(database.get_session(self.connection, "DS102-W3"))
+        self.assertEqual(self.count("SELECT COUNT(*) FROM sessions"), 7)
+        self.assert_no_orphans()
+
+        # By hand: DS102-W3 had 6 Present, 1 Absent (011) and 2 Unknown (008, 012).
+        # Present 63 - 6 = 57; Absent 9 - 1 = 8; Unknown 4 - 2 = 2.
+        totals = self.dashboard_totals()
+        self.assertEqual((totals["present"], totals["absent"], totals["unknown"]), (57, 8, 2))
+
+
+class TestDeleteCourse(SeedDatabaseTestCase):
+
+    def test_refused_with_sessions_and_students(self):
+        """FR-23: PY101 has 4 sessions and 10 students, so it cannot be deleted."""
+        self.assertEqual(database.get_course_usage(self.connection, "PY101"), (4, 10))
+
+        with self.assertRaises(ValueError):
+            database.delete_course(self.connection, "PY101")
+        self.assertTrue(database.course_exists(self.connection, "PY101"))
+
+    def test_refused_with_only_a_student(self):
+        """FR-23: a course with one enrolled student and no sessions is refused."""
+        database.add_course(self.connection, "ML300", "Machine Learning")
+        database.enroll_student(self.connection, "001", "ML300")
+
+        with self.assertRaises(ValueError):
+            database.delete_course(self.connection, "ML300")
+
+    def test_refused_with_only_a_session(self):
+        """FR-23: a course with one session and no students is refused."""
+        database.add_course(self.connection, "ML300", "Machine Learning")
+        database.add_session(self.connection, "ML300-W1", "ML300", "2026-10-01")
+
+        with self.assertRaises(ValueError):
+            database.delete_course(self.connection, "ML300")
+
+    def test_empty_course_is_deleted(self):
+        """FR-23: a course with no sessions and no students is deleted."""
+        database.add_course(self.connection, "ML300", "Machine Learning")
+
+        counts = database.delete_course(self.connection, "ML300")
+
+        self.assertEqual(counts, {"courses": 1})
+        self.assertFalse(database.course_exists(self.connection, "ML300"))
+        self.assert_no_orphans()
+
+
+if __name__ == "__main__":
+    unittest.main()
