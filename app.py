@@ -823,18 +823,29 @@ def show_single_student_report(student_id, student_label, filtered_records):
 # ---------- Tabs ----------
 
 def show_manage_tab(connection):
-    """Show every Manage Attendance section, one after another."""
-    show_add_course(connection)
-    st.divider()
-    show_add_student(connection)
-    st.divider()
-    show_enroll_student(connection)
-    st.divider()
-    show_add_session(connection)
-    st.divider()
-    show_record_attendance(connection)
-    st.divider()
-    show_search_students(connection)
+    """Show the Manage Attendance sections grouped into sub-tabs."""
+    students_tab, courses_tab, sessions_tab, record_tab = st.tabs(
+        ["Students", "Courses", "Sessions", "Record Attendance"]
+    )
+
+    # Courses run first so a course created in this run already appears in the
+    # Students and Sessions lists. The order of the sub-tabs on screen stays the same.
+    with courses_tab:
+        show_add_course(connection)
+
+    with students_tab:
+        # Search first, so the user can check whether a student exists before adding.
+        show_search_students(connection)
+        st.divider()
+        show_add_student(connection)
+        st.divider()
+        show_enroll_student(connection)
+
+    with sessions_tab:
+        show_add_session(connection)
+
+    with record_tab:
+        show_record_attendance(connection)
 
 
 def main():
