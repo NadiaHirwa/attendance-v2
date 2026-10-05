@@ -204,7 +204,7 @@ def split_by_threshold(student_summary, threshold):
 def build_attendance_report(frame):
     """Return the filtered attendance table with readable column names (FR-16)."""
     report = frame.sort_values(["session_date", "session_id", "student_id"], ignore_index=True)
-    report = report[["student_id", "full_name", "course_code", "session_id", "session_date", "status"]]
+    report = report[RECORD_COLUMNS]
     return report.rename(columns={
         "student_id": "Student ID",
         "full_name": "Full name",

@@ -16,6 +16,8 @@ import importer
 import validation
 
 STATUS_OPTIONS = ["Present", "Absent"]
+# Width in pixels, so the longest import reasons fit without being cut off.
+REASON_COLUMN_WIDTH = 1500
 NO_COURSES_MESSAGE = "No courses yet. Create a course first."
 NO_STUDENTS_MESSAGE = "No students yet. Add a student first."
 NO_DATA_MESSAGE = (
@@ -157,6 +159,10 @@ def show_enroll_student(connection):
 
     if not student_choices:
         st.info(NO_STUDENTS_MESSAGE)
+        return
+
+    if not course_choices:
+        st.info(NO_COURSES_MESSAGE)
         return
 
     with st.form("enroll_form"):
@@ -441,6 +447,21 @@ def validate_upload(connection, uploaded_file, rows):
         del st.session_state["import_result"]
 
 
+def show_table_with_reasons(table):
+    """Show duplicate or rejected rows with a reason column wide enough to read."""
+    st.dataframe(
+        table,
+        hide_index=True,
+        width="stretch",
+        column_config={
+            importer.ROW_COLUMN: st.column_config.NumberColumn("row", width="small"),
+            importer.REASON_COLUMN: st.column_config.TextColumn(
+                "reason", width=REASON_COLUMN_WIDTH
+            ),
+        },
+    )
+
+
 def show_review(validation_result):
     """Show the counts and the accepted, duplicate and rejected rows (Review issues step)."""
     accepted_table = validation_result["accepted_table"]
@@ -460,11 +481,11 @@ def show_review(validation_result):
 
     if not duplicates_table.empty:
         st.markdown("**Skipped duplicates** (already saved or repeated in this file)")
-        st.dataframe(duplicates_table, hide_index=True, width="stretch")
+        show_table_with_reasons(duplicates_table)
 
     if not rejected_table.empty:
         st.markdown("**Rejected rows**")
-        st.dataframe(rejected_table, hide_index=True, width="stretch")
+        show_table_with_reasons(rejected_table)
         st.download_button(
             "Download rejected rows (CSV)",
             data=rejected_table.to_csv(index=False),
@@ -587,7 +608,10 @@ def show_filters(connection):
 
 
 def has_data_to_show(filtered_records, filter_text):
-    """Show the filters, or a message instead of empty tables (FR-18). Return True if there is data."""
+    """Show the filters, or a message instead of empty tables (FR-18).
+
+    Returns True if there is data to show.
+    """
     if filtered_records is None:
         st.info(filter_text)
         return False
@@ -625,7 +649,10 @@ def show_rate_chart(filtered_records):
 
     chart_data = analytics.build_rate_chart_data(filtered_records)
     if chart_data.empty:
-        st.info("No attendance has been recorded for these sessions yet, so there is nothing to chart.")
+        st.info(
+            "No attendance has been recorded for these sessions yet, "
+            "so there is nothing to chart."
+        )
         return
 
     st.bar_chart(chart_data, y=analytics.CHART_VALUE_COLUMN)

@@ -47,7 +47,9 @@ DUPLICATE_NAME_WARNING = (
 FILE_NOT_UTF8_ERROR = (
     "The file could not be read as UTF-8 text. Save it as \"CSV UTF-8\" and upload it again."
 )
-FILE_NOT_CSV_ERROR = "The file could not be read as CSV. Expected comma-separated rows with a header."
+FILE_NOT_CSV_ERROR = (
+    "The file could not be read as CSV. Expected comma-separated rows with a header."
+)
 MISSING_COLUMNS_ERROR = "The file is missing required column(s): {}. Expected columns: {}."
 UNKNOWN_COURSE_ERROR = 'Unknown course "{}". Create it first in Manage Attendance.'
 NAME_CONFLICT_SAVED_ERROR = (

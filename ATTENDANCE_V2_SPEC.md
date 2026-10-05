@@ -155,6 +155,7 @@ attendance_v2/
 - Records cannot be deleted in the app.
 - Accented and unaccented names (`Émile` / `Emile`) are different.
 - Validation checks format and consistency, not truth.
+- A session ID is not tied to its course name: `PY101-W5` can be created for course DS102.
 
 ## 10. Minimum tests
 
@@ -176,6 +177,26 @@ attendance_v2/
 | T14 | Foreign keys on: attendance for a missing session raises an error | Section 3 |
 
 Tests use a **temporary database** (`:memory:` or a temp file), never `attendance.db`.
+
+## 11. Implementation decisions
+
+Decisions made while building, where the sections above did not say what to do.
+
+| Topic | Decision |
+|---|---|
+| BR-08, FR-08 | `record_attendance()` returns `inserted`, `updated`, `unchanged` or `not_enrolled`. An unchanged status is not rewritten. |
+| BR-09 | `record_attendance()` checks enrollment itself and returns `not_enrolled` without saving. A missing session is left to the foreign key, which raises an error (T14). |
+| FR-07 | A student left blank in the recording table is not saved and stays Unknown. |
+| FR-04 | The same-name confirmation is a checkbox in the Add student form. |
+| FR-06 | The session date is typed as `YYYY-MM-DD` text and checked with BR-06. |
+| IR-02 | Row numbers match the file as seen in a spreadsheet: the header is row 1, the first data row is row 2. Format errors quote the value found. |
+| IR-04, IR-05, IR-08 | Consistency is also checked **inside the file**: a new student ID with two names, a new session ID with two courses or dates, or one student and session with two statuses. The first row is kept and the later one is rejected. |
+| IR-07 | Duplicates are listed with their reason (`Repeats row N` or `Already saved with the same status`). |
+| IR-09 | Confirm saves all accepted rows in **one transaction**: if any row fails, nothing is saved and the user is asked to validate again. Validation only reads the database. The validation result is kept in `st.session_state` and cleared after a successful import, so Confirm cannot run twice. |
+| FR-12 | The course and date filters are in the sidebar and apply to both the Dashboard and Reports. The date range defaults to the earliest and latest session dates. |
+| FR-14 | Sessions with no recorded status have no rate and are left out of the chart. |
+| FR-15 | "Below the threshold" means strictly lower than it. Students with no recorded sessions (rate N/A) are listed in a separate table. |
+| NFR-03 | Lines are at most 99 characters (PEP 8 allows 99 when a project agrees on it). |
 
 ---
 

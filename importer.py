@@ -123,29 +123,36 @@ def clean_row(raw_row):
     """Check BR-01 to BR-07 for one row. Return (cleaned row, None) or (None, reason)."""
     row_number = raw_row[ROW_COLUMN]
 
-    student_id = raw_row["student_id"].strip()
+    raw_student_id = raw_row["student_id"]
+    student_id = raw_student_id.strip()
     if not validation.is_valid_student_id(student_id):
-        return None, make_format_reason(row_number, validation.STUDENT_ID_ERROR, raw_row["student_id"])
+        message = validation.STUDENT_ID_ERROR
+        return None, make_format_reason(row_number, message, raw_student_id)
 
     full_name = validation.clean_name(raw_row["full_name"])
     if not validation.is_valid_name(full_name):
-        return None, make_format_reason(row_number, validation.NAME_ERROR, raw_row["full_name"])
+        message = validation.NAME_ERROR
+        return None, make_format_reason(row_number, message, raw_row["full_name"])
 
     course_code = validation.normalize_course_code(raw_row["course_code"])
     if course_code is None:
-        return None, make_format_reason(row_number, validation.COURSE_CODE_ERROR, raw_row["course_code"])
+        message = validation.COURSE_CODE_ERROR
+        return None, make_format_reason(row_number, message, raw_row["course_code"])
 
     session_id = validation.normalize_session_id(raw_row["session_id"])
     if session_id is None:
-        return None, make_format_reason(row_number, validation.SESSION_ID_ERROR, raw_row["session_id"])
+        message = validation.SESSION_ID_ERROR
+        return None, make_format_reason(row_number, message, raw_row["session_id"])
 
     session_date = validation.parse_date(raw_row["session_date"])
     if session_date is None:
-        return None, make_format_reason(row_number, validation.DATE_ERROR, raw_row["session_date"])
+        message = validation.DATE_ERROR
+        return None, make_format_reason(row_number, message, raw_row["session_date"])
 
     status = validation.normalize_status(raw_row["status"])
     if status is None:
-        return None, make_format_reason(row_number, validation.STATUS_ERROR, raw_row["status"])
+        message = validation.STATUS_ERROR
+        return None, make_format_reason(row_number, message, raw_row["status"])
 
     cleaned = {
         ROW_COLUMN: row_number,
@@ -185,7 +192,10 @@ def check_student(connection, row, file_students):
 
 
 def check_session(connection, row, file_sessions):
-    """Return a conflict reason if the session has a different course or date (IR-05), else None."""
+    """Return a conflict reason if the session has a different course or date (IR-05).
+
+    Returns None when there is no conflict.
+    """
     session_id = row["session_id"]
     course_code = row["course_code"]
     session_date = row["session_date"]
@@ -298,7 +308,8 @@ def validate_rows(connection, rows):
         if row["student_id"] not in file_students:
             file_students[row["student_id"]] = (row["full_name"], row_number)
         if row["session_id"] not in file_sessions:
-            file_sessions[row["session_id"]] = (row["course_code"], row["session_date"], row_number)
+            session_details = (row["course_code"], row["session_date"], row_number)
+            file_sessions[row["session_id"]] = session_details
         file_statuses[(row["student_id"], row["session_id"])] = (row["status"], row_number)
 
     return accepted, duplicates, rejected

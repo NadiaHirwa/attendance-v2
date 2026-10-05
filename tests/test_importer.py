@@ -21,9 +21,17 @@ def make_file(lines):
     return text.encode("utf-8")
 
 
+# Table names cannot be ? parameters, so each count query is written out in full (NFR-04).
+COUNT_QUERIES = {
+    "attendance": "SELECT COUNT(*) FROM attendance",
+    "students": "SELECT COUNT(*) FROM students",
+    "sessions": "SELECT COUNT(*) FROM sessions",
+}
+
+
 def count_rows(connection, table_name):
     """Return the number of rows in a table (only used by the tests)."""
-    return connection.execute(f"SELECT COUNT(*) FROM {table_name}").fetchone()[0]
+    return connection.execute(COUNT_QUERIES[table_name]).fetchone()[0]
 
 
 class ImporterTestCase(unittest.TestCase):
@@ -60,7 +68,7 @@ class TestReadCsv(ImporterTestCase):
         self.assertIn("status", error)
 
     def test_headers_any_case_and_extra_columns(self):
-        """IR-01: header names are case-insensitive, in any order, and extra columns are ignored."""
+        """IR-01: headers are case-insensitive, in any order; extra columns are ignored."""
         file_bytes = (
             "﻿Status,Notes,Full_Name,Student_ID,Session_Date,Course_Code,Session_ID\n"
             "P,hello,Nadia Hirwa,001,2026-09-07,PY101,PY101-W1\n"
@@ -117,7 +125,7 @@ class TestValidateRows(ImporterTestCase):
         self.assertEqual(len(duplicates), 1)
 
     def test_t11_conflicting_status(self):
-        """T11 (IR-08): a different status for a saved record is rejected and the saved one kept."""
+        """T11 (IR-08): a conflicting status is rejected and the saved record is kept."""
         database.record_attendance(self.connection, "001", "PY101-W1", "Present")
 
         rows, error = importer.read_csv(make_file([
