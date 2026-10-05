@@ -39,6 +39,15 @@ STUDENT_EXISTS_ERROR = "Student ID {} is already used. Enter a different student
 SESSION_EXISTS_ERROR = "Session {} already exists. Session IDs must be unique across all courses."
 ALREADY_ENROLLED_ERROR = "Student {} is already enrolled in {}. Choose a different course."
 NO_CHANGE_MESSAGE = "No change: the new {} is the same as the current one."
+ENROLLMENT_DATES_ERROR = (
+    "Invalid enrollment dates. The end date must be on or after the start date."
+)
+ENROLLED_FROM_ERROR = "Student {} is enrolled in {} from {}, not on {}."
+ENROLLED_UNTIL_ERROR = "Student {} was enrolled in {} until {}, not on {}."
+RECORDS_OUTSIDE_DATES_ERROR = (
+    "Cannot change the dates: {} saved attendance record(s) of {} in {} would fall "
+    "outside them. Delete those records first or choose wider dates."
+)
 COURSE_IN_USE_ERROR = (
     "Course {} cannot be deleted: it still has {} session(s) and {} enrolled student(s). "
     "Delete those sessions and un-enroll those students first."
@@ -206,6 +215,28 @@ def parse_date(date_text):
         return None
 
     return parsed.strftime(DATE_FORMAT)
+
+
+def is_in_enrollment_window(session_date, start_date, end_date):
+    """Return True if a student is expected at a session on session_date (BR-15).
+
+    All dates are 'YYYY-MM-DD' text, so comparing the text also compares the dates.
+    A start_date or end_date of None means there is no limit on that side.
+    """
+    if start_date is not None and session_date < start_date:
+        return False
+
+    if end_date is not None and session_date > end_date:
+        return False
+
+    return True
+
+
+def are_enrollment_dates_valid(start_date, end_date):
+    """Return True unless both dates are set and the end is before the start (BR-15)."""
+    if start_date is None or end_date is None:
+        return True
+    return end_date >= start_date
 
 
 def normalize_status(status):

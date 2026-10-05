@@ -3,13 +3,14 @@
 Each requirement in [ATTENDANCE_V2_SPEC.md](ATTENDANCE_V2_SPEC.md) with the function(s)
 that implement it and the test(s) or demo step that check it.
 Test names refer to methods in `tests/test_validation.py`, `tests/test_analytics.py`,
-`tests/test_importer.py` and `tests/test_database.py`.
+`tests/test_importer.py`, `tests/test_database.py` and `tests/test_enrollment_dates.py`.
 
 ## Data model (Section 3)
 
 | Requirement | Function(s) | Test or check |
 |---|---|---|
 | Schema exactly as Section 3 | `database.SCHEMA`, `database.create_tables` | Every database test creates the tables with it |
+| Older `attendance.db` gets the enrollment date columns | `database.create_tables`, `database.add_enrollment_date_columns` | `test_old_database_gets_date_columns` |
 | `PRAGMA foreign_keys = ON` on every connection | `database.get_connection` | T14: `test_t14_foreign_keys_pragma`, `test_t14_foreign_keys_are_on` |
 | Unknown is never stored | `database.get_expected_records`, `analytics.build_records_frame` | `test_unknown_is_not_stored` |
 
@@ -31,6 +32,7 @@ Test names refer to methods in `tests/test_validation.py`, `tests/test_analytics
 | BR-12 Unknown | `analytics.build_records_frame`, `analytics.count_statuses` | `test_t06_worked_example_from_database`, `test_unknown_is_not_stored` |
 | BR-13 Error messages | Message constants in `validation.py` | `test_format_errors_name_the_value`, `test_t09_unknown_course`; manual demo step: `-Nadia` |
 | BR-14 Absence streaks | `analytics.calculate_streaks`, `analytics.statuses_in_session_order` | `test_absent_absent_present_absent`, `test_unknown_breaks_the_streak`, `test_no_records`, `test_ends_with_present`, `test_ends_with_unknown`, `test_streaks_respect_filters` |
+| BR-15 Enrollment dates | `validation.is_in_enrollment_window`, `validation.are_enrollment_dates_valid`, `database.get_expected_records`, `database.get_session_attendance`, `database.record_attendance` | `test_window_with_no_dates`, `test_window_start_and_end_are_included`, `test_window_outside`, `test_end_before_start_is_invalid`, `test_null_dates_behave_like_before`, `test_late_joiner`, `test_student_who_left`, `test_start_and_end`, `test_outside_window_is_not_saved`, `test_on_start_date_is_saved` |
 
 ## CSV import rules (Section 5)
 
@@ -75,6 +77,7 @@ Test names refer to methods in `tests/test_validation.py`, `tests/test_analytics
 | FR-21 Absence alerts and streaks per course | `app.show_absence_alerts`, `app.show_single_student_report`, `analytics.build_streak_table`, `analytics.find_streak_alerts`, `analytics.find_last_absence_date`, `analytics.build_course_summary`, `analytics.calculate_streaks` | `test_seed_streaks_by_hand`, `test_seed_alerts_default`, `test_seed_alerts_sorted_highest_first`, `test_streaks_respect_filters`, `test_course_summary_has_streaks`, `test_empty_records_give_no_alerts` |
 | FR-22 Rename a student or course | `app.show_rename_student`, `app.show_rename_course`, `database.rename_student`, `database.rename_course`, `database.get_course_name`, `validation.clean_name`, `validation.is_valid_name`, `validation.clean_course_name` | `test_rename_student`, `test_rename_course`, `test_rename_values_are_validated`; manual demo step: "No change" and the same-name warning |
 | FR-23 Delete with confirmation | `app.show_delete_attendance_record`, `app.show_unenroll_student`, `app.show_delete_student`, `app.show_delete_session`, `app.show_delete_course`, `app.ask_to_confirm`, `database.delete_attendance_record`, `database.unenroll_student`, `database.delete_student`, `database.delete_session`, `database.delete_course`, `database.count_unenroll`, `database.count_delete_student`, `database.count_delete_session`, `database.get_course_usage` | `test_delete_present_record`, `test_delete_absent_record`, `test_unenroll_removes_course_records_only`, `test_unenroll_with_missing_record`, `test_delete_student_removes_everything`, `test_deleted_id_can_be_used_again`, `test_delete_session`, `test_refused_with_sessions_and_students`, `test_refused_with_only_a_student`, `test_refused_with_only_a_session`, `test_empty_course_is_deleted` |
+| FR-24 Enrollment dates on screens and in import | `app.show_enrollment_date_inputs`, `app.show_add_student`, `app.show_enroll_student`, `app.show_record_attendance`, `app.show_change_enrollment_dates`, `database.enroll_student`, `database.get_enrollment`, `database.update_enrollment_dates`, `database.count_records_outside_window`, `database.import_records`, `importer.check_enrollment_dates`, `importer.find_enrollment_starts`, `analytics.build_course_summary`, `analytics.format_enrollment_date` | `test_seed_dates_are_null_and_totals_unchanged`, `test_record_attendance_list_follows_dates`, `test_change_refused_when_records_fall_outside`, `test_change_allowed_when_no_records_outside`, `test_new_student_starts_at_earliest_row`, `test_existing_student_new_course_starts_at_row`, `test_row_before_start_is_rejected`, `test_row_after_end_is_rejected`, `test_by_course_shows_start_and_now`, `test_by_course_shows_dates` |
 
 ## Non-functional requirements (Section 7)
 

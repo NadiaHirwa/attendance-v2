@@ -19,7 +19,7 @@ Version 2 records attendance for **several courses and sessions**, **saves it pe
 **In scope:** courses, students, enrollments, sessions, Present/Absent recording and correction,
 search, CSV import with validation, dashboard, reports, CSV downloads, SQLite storage.
 
-**Out of scope (Future Work):** login/roles, Late/Excused, enrollment start/end dates,
+**Out of scope (Future Work):** login/roles, Late/Excused,
 conflict-resolution screens, import history tab, multi-file upload,
 student self-service view (requires login and roles).
 
@@ -27,7 +27,8 @@ student self-service view (requires login and roles).
 
 - A1. One trusted operator uses the app on one computer.
 - A2. Student IDs stay in the V1 format (3 ASCII digits, 001 to 999) and identify a person across courses.
-- A3. A student enrolled in a course is expected at **every** session of that course.
+- A3. A student enrolled in a course is expected at **every** session of that course
+  inside their enrollment dates (BR-15). With no dates, that is every session.
 - A4. The system checks format and consistency, not truth.
 
 ## 3. Data model (SQLite file `attendance.db`)
@@ -37,6 +38,8 @@ courses     (course_code TEXT PRIMARY KEY, course_name TEXT NOT NULL)
 students    (student_id  TEXT PRIMARY KEY, full_name TEXT NOT NULL)
 enrollments (student_id  TEXT NOT NULL REFERENCES students,
              course_code TEXT NOT NULL REFERENCES courses,
+             start_date  TEXT,                       -- YYYY-MM-DD or NULL (BR-15)
+             end_date    TEXT,                       -- YYYY-MM-DD or NULL (BR-15)
              PRIMARY KEY (student_id, course_code))
 sessions    (session_id  TEXT PRIMARY KEY,
              course_code TEXT NOT NULL REFERENCES courses,
@@ -50,7 +53,8 @@ attendance  (student_id  TEXT NOT NULL REFERENCES students,
 ```
 
 - `PRAGMA foreign_keys = ON` runs on **every** connection (inside `get_connection()`).
-- **Unknown is never stored.** It is calculated: an enrolled student with no attendance row for a session of their course.
+- **Unknown is never stored.** It is calculated: an enrolled student with no attendance row for a session of their course inside their enrollment dates (BR-15).
+- `create_tables()` adds `start_date` and `end_date` to an older `attendance.db` that lacks them (`ALTER TABLE ... ADD COLUMN`); old enrollments get NULL dates and behave as before.
 
 ## 4. Business rules
 
@@ -70,6 +74,7 @@ attendance  (student_id  TEXT NOT NULL REFERENCES students,
 | BR-12 | **Unknown** = Expected - Present - Absent. Unknown is never counted as Absent. |
 | BR-13 | Every error message states what was wrong and what is expected. |
 | BR-14 | **Absence streak:** counted per student per course, over that course's sessions in date order (then session ID), using only sessions inside the current filters. Consecutive Absent records form a streak; Present ends it, and Unknown also ends it (Unknown is not an absence and does not join two absences). **Longest streak** = the longest run anywhere. **Current streak** = the run of Absent counted back from the student's most recent session in that course (0 if that session is not Absent). |
+| BR-15 | **Enrollment dates:** an enrollment has an optional `start_date` and `end_date` (`YYYY-MM-DD`). A student is **expected** at a session only if the session date is on or after `start_date` (when set) and on or before `end_date` (when set); both dates are included. NULL start = from the course's first session; NULL end = still enrolled. The end must not be before the start. Attendance can only be recorded for an expected session. |
 
 **Worked example (use in a test and on a slide):** 7 Present, 2 Absent, 1 Unknown, so Attendance = 77.78% and Completeness = 90.00%.
 
@@ -122,6 +127,7 @@ session_id,course_code,session_date,student_id,full_name,status
 | FR-21 | Dashboard, Reports | **Absence alerts** (Dashboard, below the threshold list): a number input "Alert when current streak is at least" (default 2, minimum 1) lists every student and course whose current streak (BR-14) reaches it, with student ID, name, course, current streak, longest streak and date of last absence, highest current streak first. If nobody matches, a success message says so. In the Reports single-student view, the "By course" table (shown even for one course) adds the longest and current absence streak per course. |
 | FR-22 | Manage (Edit & Delete) | **Rename** a student's full name (BR-02 cleaning and validation, and the same-name warning with confirmation as in FR-04, ignoring the student's own name) or a course's name (BR-04). Student IDs and course codes never change. If the new value equals the old one, show "No change". |
 | FR-23 | Manage (Edit & Delete) | **Delete**, each in one database transaction that returns the counts removed: one attendance record (the student becomes Unknown for that session); an enrollment, with the student's records for that course's sessions; a student, with all their records and enrollments (the ID can be used again); a session, with its records; a course, only when it has no sessions and no enrolled students (otherwise an error says how many sessions and students must be removed first). Every delete first shows what will be removed, with counts, and the Delete button works only after ticking "I understand this cannot be undone". |
+| FR-24 | Manage, Import, Reports | **Enrollment dates (BR-15).** Add Student and Enroll ask for "Enrolled from" (default today) and an optional "Enrolled until". Record Attendance lists only students expected at the session, and `record_attendance()` returns `outside_enrollment` without saving for a date outside the window. Edit & Delete has "Change enrollment dates", refused (with the number of records affected) if saved attendance would fall outside the new dates. Import: a new enrollment starts at the student's earliest session date for that course in the accepted rows; for an existing enrollment, a row outside its dates is rejected (for example `Row 7: Student 004 is enrolled in PY101 from 2026-09-14, not on 2026-09-07.`). The Reports "By course" table shows "Enrolled from" and "Enrolled until" ("start" / "now" when not set). The seed data has no dates. |
 
 ## 7. Non-functional requirements
 
@@ -157,7 +163,6 @@ attendance_v2/
 
 ## 9. Known limitations
 
-- Enrollment has no start date: a student who joins late shows Unknown for earlier sessions.
 - No login: anyone at the computer can change records.
 - Accented and unaccented names (`Émile` / `Emile`) are different.
 - Validation checks format and consistency, not truth.

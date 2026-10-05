@@ -61,7 +61,7 @@ The fix prompt that was used is kept at the end of this file for reference.
 | 3.11 | Name `O’Neil` (curly apostrophe) | Saved as `O'Neil`. |
 | 3.12 | Name `Émile` | Accepted. |
 | 3.13 | Name with 51 letters | Rejected. 50 is accepted. |
-| 3.14 | Enroll 001 in DS102 | Success. **Then 001 has Unknown for all 4 DS102 sessions** (see 9.3). |
+| 3.14 | Enroll 001 in DS102, "Enrolled from" left at today | Success. 001 is **not expected** at the 4 past DS102 sessions, so Dashboard Unknown stays 4. With "Enrolled from" = `2026-09-01` instead, 001 is Unknown for all 4 DS102 sessions (Unknown 4 → 8). |
 | 3.15 | Enroll 001 in DS102 again | Error: already enrolled. |
 | 3.16 | Can I add a student without a course? | **No.** Adding always enrolls in one course. |
 | 3.17 | Can I edit a name, delete a student, or un-enroll? | **Yes**, in Manage → **Edit & Delete** (see section 11). The student ID never changes. |
@@ -125,9 +125,10 @@ The fix prompt that was used is kept at the end of this file for reference.
 | 7.8 | Existing ID with a **different name** | ✔ Rejected (name conflict). |
 | 7.9 | Existing ID, same name in **different case** (`NADIA HIRWA`) | ✔ Accepted. The saved spelling `Nadia Hirwa` is kept. |
 | 7.10 | **New** ID with the same name as an existing student | ✔ Accepted **without a warning** (the warning exists only in the Add Student form). Know this answer. |
-| 7.11 | **New student** | ✔ Created and enrolled automatically. They get **Unknown for every earlier session** of that course. |
+| 7.11 | **New student** | ✔ Created and enrolled automatically, **from their earliest session date in the file** for that course. They are **not** Unknown for that course's earlier sessions. |
 | 7.12 | **New session** with only a few students in the file | ✔ Created. **Every other enrolled student is Unknown for it.** In the test: Unknown 4 → 18, completeness 94.74% → 80.22%. This is correct: their attendance really wasn't recorded. |
-| 7.13 | Existing student in a course they're **not in yet** | ✔ Enrolled automatically, so they get Unknown for that course's other sessions. |
+| 7.13 | Existing student in a course they're **not in yet** | ✔ Enrolled automatically from their earliest session date in the file, so they are Unknown only for that course's **later** sessions without a record. |
+| 7.13b | Row for a student whose enrollment starts later (e.g. enrolled from 2026-09-14, row dated 2026-09-07) | ✔ Rejected: "Student … is enrolled in PY101 from 2026-09-14, not on 2026-09-07." |
 | 7.14 | Unknown course `BIO200` | ✔ Rejected. Courses are never created by import. |
 | 7.15 | Session ID that exists with a different date or course | ✔ Rejected. |
 | 7.16 | Same student twice in the file, different names | ✔ First row kept, later row rejected. |
@@ -151,7 +152,7 @@ The fix prompt that was used is kept at the end of this file for reference.
 | 8.9 | Threshold 75% | ✔ 3 students: **002 (25%), 011 (50%), 012 (66.67%)**, lowest first. |
 | 8.10 | Threshold 50% | ✔ Only 002. **011 at exactly 50% is not listed**: "below" means strictly less than. |
 | 8.11 | Threshold 0% | "No students are below 0%." |
-| 8.12 | A new student with no records yet | Listed separately as "no recorded sessions" (rate N/A), never as 0%. |
+| 8.12 | A new student with no records yet | Enrolled from today: not on the Dashboard at all (no past sessions expected). Enrolled from an earlier date: listed separately as "no recorded sessions" (rate N/A), never as 0%. |
 | 8.13 | A course with a session but **no students** | Doesn't appear on the Dashboard at all (nothing expected). |
 
 ## 9. Reports
@@ -193,7 +194,10 @@ Run `seed_demo.py` before this section; each row starts from the seed data.
 | 11.10 | Un-enroll 004 from DS102 | ✔ Preview: 4 attendance records, 1 enrollment. After: 004 is still in PY101 with its 4 PY101 records. |
 | 11.11 | Un-enroll 012 from DS102 | ✔ 3 attendance records (DS102-W3 was never recorded), 1 enrollment. |
 | 11.12 | Delete student 004 | ✔ Preview: 8 attendance records, 2 enrollments, 1 student. 004 disappears from every list. |
-| 11.13 | After 11.12, add a new student `004` | ✔ Allowed. The new 004 has no old records (Unknown for every session). |
+| 11.13 | After 11.12, add a new student `004` | ✔ Allowed. The new 004 has no old records. With "Enrolled from" at today they are not expected at past sessions; with an earlier date they are Unknown for the sessions from that date. |
+| 11.19 | Change enrollment dates: 001 in PY101, start `2026-09-14` | ✔ Refused: 1 saved record (PY101-W1) would fall outside. |
+| 11.20 | Change enrollment dates: 010 in PY101, end `2026-09-21` | ✔ Allowed. 010 is no longer expected at PY101-W4: Dashboard Unknown 4 → 3, completeness 96.00%. |
+| 11.21 | Add student 013 to PY101 from `2026-09-21`, then Record Attendance → PY101-W1 | ✔ 013 is not listed at W1 (listed at W3 and W4). Dashboard Unknown 4 → 6. |
 | 11.14 | Delete session DS102-W3 | ✔ Preview: 7 attendance records, 1 session. After: Dashboard **57 Present, 8 Absent, 2 Unknown**, 7 sessions. |
 | 11.15 | Delete course PY101 | ✔ Error: "still has 4 session(s) and 10 enrolled student(s)". Nothing is deleted. |
 | 11.16 | Create course `ML300`, then delete it | ✔ Allowed: 1 course removed. |
@@ -205,7 +209,7 @@ Run `seed_demo.py` before this section; each row starts from the seed data.
 ## Answers to have ready ("why" questions)
 
 - **Why doesn't import create courses?** A typo like `PY11` would silently create a fake course. Courses are created on purpose.
-- **Why is a new student Unknown for old sessions?** Enrollment has no start date (known limitation). Future Work: enrollment dates.
+- **Is a new student Unknown for old sessions?** Not any more. Each enrollment has an optional start and end date (BR-15), and a student is only expected at sessions inside those dates. Add Student and Enroll start from today by default, and an import starts a new enrollment at the student's earliest session in the file. Old enrollments have no dates, so they count from the first session, as before.
 - **Why skip duplicates but reject conflicts?** A duplicate changes nothing, so it's safe to skip. A conflict means one of the two values is wrong, so a person must decide. The system never overwrites silently.
 - **Why does a new session lower completeness?** Every enrolled student is expected. If the file lists 3 of 10, 7 really are unrecorded.
 - **Why "below" is strictly less than?** Someone exactly at the threshold has met it.

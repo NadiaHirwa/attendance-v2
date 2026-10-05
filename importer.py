@@ -3,6 +3,7 @@
 The workflow has three steps that the app calls in order:
 1. read_csv() turns the uploaded bytes into rows (IR-01).
 2. validate_rows() sorts rows into accepted, duplicates and rejected.
+   It also checks each row against an existing enrollment's dates (BR-15).
    It reads the database but never writes to it (IR-09).
 3. apply_import() saves the accepted rows in one transaction, only after Confirm.
 """
@@ -223,6 +224,36 @@ def check_session(connection, row, file_sessions):
     return None
 
 
+def check_enrollment_dates(connection, row):
+    """Return a reason if the row's date is outside an existing enrollment (BR-15), else None.
+
+    A student who is not enrolled yet gets a new enrollment at Confirm, so there is
+    nothing to check for them.
+    """
+    student_id = row["student_id"]
+    course_code = row["course_code"]
+    session_date = row["session_date"]
+
+    enrollment = database.get_enrollment(connection, student_id, course_code)
+    if enrollment is None:
+        return None
+
+    start_date = enrollment["start_date"]
+    end_date = enrollment["end_date"]
+    if validation.is_in_enrollment_window(session_date, start_date, end_date):
+        return None
+
+    if start_date is not None and session_date < start_date:
+        message = validation.ENROLLED_FROM_ERROR.format(
+            student_id, course_code, start_date, session_date
+        )
+    else:
+        message = validation.ENROLLED_UNTIL_ERROR.format(
+            student_id, course_code, end_date, session_date
+        )
+    return make_reason(row[ROW_COLUMN], message)
+
+
 def check_status(connection, row, file_statuses):
     """Compare the row with saved and earlier records for the same student and session.
 
@@ -291,6 +322,8 @@ def validate_rows(connection, rows):
         reason = check_student(connection, row, file_students)
         if reason is None:
             reason = check_session(connection, row, file_sessions)
+        if reason is None:
+            reason = check_enrollment_dates(connection, row)
         if reason is not None:
             rejected.append(reject(raw_row, reason))
             continue
@@ -317,9 +350,24 @@ def validate_rows(connection, rows):
 
 # ---------- Step 3: save after Confirm ----------
 
+def find_enrollment_starts(accepted):
+    """Return the earliest session date per (student_id, course_code) in the accepted rows.
+
+    A new enrollment created by the import starts on that date (BR-15), so the
+    student is not expected at the course's earlier sessions.
+    """
+    starts = {}
+    for row in accepted:
+        key = (row["student_id"], row["course_code"])
+        if key not in starts or row["session_date"] < starts[key]:
+            starts[key] = row["session_date"]
+    return starts
+
+
 def apply_import(connection, accepted, filename):
     """Save the accepted rows in one transaction, with the filename as source (IR-10)."""
-    return database.import_records(connection, accepted, filename)
+    enrollment_starts = find_enrollment_starts(accepted)
+    return database.import_records(connection, accepted, filename, enrollment_starts)
 
 
 # ---------- Tables and downloads ----------

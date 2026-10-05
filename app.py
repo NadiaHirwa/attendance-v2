@@ -63,6 +63,37 @@ def get_session_choices(connection, course_code):
     return choices
 
 
+def show_enrollment_date_inputs(key_prefix):
+    """Show 'Enrolled from' and an optional 'Enrolled until' inside a form (BR-15).
+
+    Returns (start_date, end_date) as 'YYYY-MM-DD' text; end_date is None unless
+    the box is ticked.
+    """
+    start = st.date_input("Enrolled from", value=date.today(), key=f"{key_prefix}_start")
+    has_end = st.checkbox("Set an end date", key=f"{key_prefix}_has_end")
+    end = st.date_input(
+        "Enrolled until (used only if the box above is ticked)",
+        value=date.today(), key=f"{key_prefix}_end",
+    )
+
+    end_date = None
+    if has_end:
+        end_date = end.isoformat()
+    return start.isoformat(), end_date
+
+
+def describe_enrollment_dates(start_date, end_date):
+    """Return text like 'from 2026-10-06' or 'from 2026-09-01 until 2026-12-15'."""
+    if start_date is None:
+        text = "from the first session"
+    else:
+        text = f"from {start_date}"
+
+    if end_date is not None:
+        text = text + f" until {end_date}"
+    return text
+
+
 def join_course_codes(connection, student_id):
     """Return a student's course codes as text, like 'DS102, PY101'."""
     codes = []
@@ -117,6 +148,7 @@ def show_add_student(connection):
         id_text = st.text_input("Student ID", placeholder="001")
         name_text = st.text_input("Full name", placeholder="Nadia Hirwa")
         course_label = st.selectbox("Enroll in course", list(course_choices))
+        start_date, end_date = show_enrollment_date_inputs("add_student")
         confirm_same_name = st.checkbox("I confirm this is a different student with the same name")
         submitted = st.form_submit_button("Add student")
 
@@ -126,6 +158,10 @@ def show_add_student(connection):
     student_id = id_text.strip()
     full_name = validation.clean_name(name_text)
     course_code = course_choices[course_label]
+
+    if not validation.are_enrollment_dates_valid(start_date, end_date):
+        st.error(validation.ENROLLMENT_DATES_ERROR)
+        return
 
     if not validation.is_valid_student_id(student_id):
         st.error(validation.STUDENT_ID_ERROR)
@@ -149,8 +185,11 @@ def show_add_student(connection):
         return
 
     database.add_student(connection, student_id, full_name)
-    database.enroll_student(connection, student_id, course_code)
-    st.success(f"Student {student_id} - {full_name} added and enrolled in {course_code}.")
+    database.enroll_student(connection, student_id, course_code, start_date, end_date)
+    st.success(
+        f"Student {student_id} - {full_name} added and enrolled in {course_code} "
+        f"{describe_enrollment_dates(start_date, end_date)}."
+    )
 
 
 # ---------- FR-05: enroll an existing student ----------
@@ -173,6 +212,7 @@ def show_enroll_student(connection):
     with st.form("enroll_form"):
         student_label = st.selectbox("Student", list(student_choices))
         course_label = st.selectbox("Course", list(course_choices))
+        start_date, end_date = show_enrollment_date_inputs("enroll")
         submitted = st.form_submit_button("Enroll")
 
     if not submitted:
@@ -181,11 +221,16 @@ def show_enroll_student(connection):
     student_id = student_choices[student_label]
     course_code = course_choices[course_label]
 
-    if database.is_enrolled(connection, student_id, course_code):
+    if not validation.are_enrollment_dates_valid(start_date, end_date):
+        st.error(validation.ENROLLMENT_DATES_ERROR)
+    elif database.is_enrolled(connection, student_id, course_code):
         st.error(validation.ALREADY_ENROLLED_ERROR.format(student_id, course_code))
     else:
-        database.enroll_student(connection, student_id, course_code)
-        st.success(f"Student {student_id} enrolled in {course_code}.")
+        database.enroll_student(connection, student_id, course_code, start_date, end_date)
+        st.success(
+            f"Student {student_id} enrolled in {course_code} "
+            f"{describe_enrollment_dates(start_date, end_date)}."
+        )
 
 
 # ---------- FR-06: create a session ----------
@@ -241,7 +286,7 @@ def save_attendance_table(connection, session_id, table):
     """Save every chosen status and return counts of what happened."""
     counts = {
         "inserted": 0, "updated": 0, "unchanged": 0, "not_enrolled": 0,
-        "blank": 0, "cleared": 0,
+        "outside_enrollment": 0, "blank": 0, "cleared": 0,
     }
 
     for index, row in table.iterrows():
@@ -280,6 +325,12 @@ def show_save_result(counts):
             "To delete a record, use Manage Attendance > Edit & Delete."
         )
 
+    if counts["outside_enrollment"] > 0:
+        st.error(
+            f"{counts['outside_enrollment']} student(s) were not saved: this session's date is "
+            "outside their enrollment dates. Change the dates in Edit & Delete first."
+        )
+
     if counts["not_enrolled"] > 0:
         st.error(
             f"{counts['not_enrolled']} student(s) are not enrolled in this course and were "
@@ -309,7 +360,10 @@ def show_record_attendance(connection):
 
     table = build_attendance_table(connection, session_id)
     if table.empty:
-        st.info(f"No students are enrolled in {course_code} yet. Add or enroll a student first.")
+        st.info(
+            f"No students are expected at {session_id}: nobody is enrolled in {course_code} "
+            "on that date. Add or enroll a student, or check their enrollment dates."
+        )
         return
 
     st.caption("Choose Present or Absent for each student. A blank status means Unknown.")
@@ -473,6 +527,88 @@ def show_rename_course(connection):
         finish_edit(f"Course {course_code} renamed from {current_name} to {new_name}.")
 
 
+def show_change_enrollment_dates(connection):
+    """Change the start and end dates of one enrollment (FR-24).
+
+    Refused when saved attendance would fall outside the new dates.
+    """
+    st.subheader("Change enrollment dates")
+
+    student_choices = get_student_choices(connection)
+    if not student_choices:
+        st.info(NO_STUDENTS_MESSAGE)
+        return
+
+    student_label = st.selectbox("Student", list(student_choices), key="dates_student")
+    student_id = student_choices[student_label]
+
+    course_codes = []
+    for course in database.get_student_courses(connection, student_id):
+        course_codes.append(course["course_code"])
+
+    if not course_codes:
+        st.info(f"{student_label} is not enrolled in any course.")
+        return
+
+    course_code = st.selectbox("Course", course_codes, key="dates_course")
+    enrollment = database.get_enrollment(connection, student_id, course_code)
+    current_start = enrollment["start_date"]
+    current_end = enrollment["end_date"]
+    st.caption(
+        f"Current: enrolled in {course_code} "
+        f"{describe_enrollment_dates(current_start, current_end)}."
+    )
+
+    with st.form(f"dates_form_{student_id}_{course_code}"):
+        has_start = st.checkbox(
+            "Set a start date (otherwise from the first session)", value=current_start is not None
+        )
+        start = st.date_input("Enrolled from", value=to_date(current_start))
+        has_end = st.checkbox(
+            "Set an end date (otherwise still enrolled)", value=current_end is not None
+        )
+        end = st.date_input("Enrolled until", value=to_date(current_end))
+        submitted = st.form_submit_button("Change dates")
+
+    if not submitted:
+        return
+
+    start_date = None
+    if has_start:
+        start_date = start.isoformat()
+    end_date = None
+    if has_end:
+        end_date = end.isoformat()
+
+    if not validation.are_enrollment_dates_valid(start_date, end_date):
+        st.error(validation.ENROLLMENT_DATES_ERROR)
+        return
+
+    if start_date == current_start and end_date == current_end:
+        st.info(validation.NO_CHANGE_MESSAGE.format("dates"))
+        return
+
+    outside = database.count_records_outside_window(
+        connection, student_id, course_code, start_date, end_date
+    )
+    if outside > 0:
+        st.error(validation.RECORDS_OUTSIDE_DATES_ERROR.format(outside, student_id, course_code))
+        return
+
+    database.update_enrollment_dates(connection, student_id, course_code, start_date, end_date)
+    finish_edit(
+        f"{student_id} is now enrolled in {course_code} "
+        f"{describe_enrollment_dates(start_date, end_date)}."
+    )
+
+
+def to_date(date_text):
+    """Turn 'YYYY-MM-DD' text into a date for st.date_input, or today when it is None."""
+    if date_text is None:
+        return date.today()
+    return date.fromisoformat(date_text)
+
+
 def show_delete_attendance_record(connection):
     """Delete one saved attendance record; the student becomes Unknown (FR-23)."""
     st.subheader("Delete one attendance record")
@@ -624,6 +760,8 @@ def show_edit_and_delete(connection):
     show_rename_student(connection)
     st.divider()
     show_rename_course(connection)
+    st.divider()
+    show_change_enrollment_dates(connection)
     st.divider()
     show_delete_attendance_record(connection)
     st.divider()

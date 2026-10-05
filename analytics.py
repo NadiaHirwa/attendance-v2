@@ -33,6 +33,12 @@ RECORD_COLUMNS = [
     "session_date",
     "status",
 ]
+ENROLLMENT_COLUMNS = ["enrollment_start", "enrollment_end"]
+ENROLLED_FROM_COLUMN = "Enrolled from"
+ENROLLED_UNTIL_COLUMN = "Enrolled until"
+# Shown instead of an empty date (BR-15).
+NO_START_TEXT = "start"
+NO_END_TEXT = "now"
 
 
 def calculate_rates(present, absent, unknown):
@@ -76,8 +82,9 @@ def build_records_frame(records):
     """Turn expected records from the database into a DataFrame.
 
     A missing status becomes 'Unknown'. It is computed here, never stored (BR-12).
+    The enrollment dates are kept for the student report (FR-24).
     """
-    frame = pd.DataFrame(records, columns=RECORD_COLUMNS)
+    frame = pd.DataFrame(records, columns=RECORD_COLUMNS + ENROLLMENT_COLUMNS)
     frame["status"] = frame["status"].fillna(UNKNOWN)
     return frame
 
@@ -331,17 +338,36 @@ def filter_student(frame, student_id):
     return frame[frame["student_id"] == student_id].reset_index(drop=True)
 
 
+def format_enrollment_date(date_text, empty_text):
+    """Return an enrollment date, or empty_text ('start' or 'now') when there is none."""
+    if date_text is None or pd.isna(date_text):
+        return empty_text
+    return date_text
+
+
 def build_course_summary(frame):
-    """Return one row per course with Present, Absent, Unknown, rate, completeness and
-    the longest and current absence streaks (FR-19, FR-21)."""
+    """Return one row per course with the enrollment dates, Present, Absent, Unknown,
+    rate, completeness and the absence streaks (FR-19, FR-21, FR-24).
+
+    Meant for one student's records, so each course has one enrollment.
+    """
     columns = [
-        "course_code", "Present", "Absent", "Unknown", "attendance_rate", "completeness",
+        "course_code", ENROLLED_FROM_COLUMN, ENROLLED_UNTIL_COLUMN,
+        "Present", "Absent", "Unknown", "attendance_rate", "completeness",
         LONGEST_STREAK_COLUMN, CURRENT_STREAK_COLUMN,
     ]
     rows = []
 
     for course_code, group in frame.groupby("course_code", sort=True):
-        labels = {"course_code": course_code}
+        labels = {
+            "course_code": course_code,
+            ENROLLED_FROM_COLUMN: format_enrollment_date(
+                group["enrollment_start"].iloc[0], NO_START_TEXT
+            ),
+            ENROLLED_UNTIL_COLUMN: format_enrollment_date(
+                group["enrollment_end"].iloc[0], NO_END_TEXT
+            ),
+        }
         row = build_summary_row(labels, group)
         longest, current = calculate_streaks(statuses_in_session_order(group))
         row[LONGEST_STREAK_COLUMN] = longest

@@ -7,6 +7,8 @@ Functions expect values that were already checked by validation.py.
 import sqlite3
 from datetime import datetime
 
+import validation
+
 DB_PATH = "attendance.db"
 MANUAL_SOURCE = "manual"
 
@@ -25,6 +27,8 @@ CREATE TABLE IF NOT EXISTS students (
 CREATE TABLE IF NOT EXISTS enrollments (
     student_id  TEXT NOT NULL REFERENCES students,
     course_code TEXT NOT NULL REFERENCES courses,
+    start_date  TEXT,
+    end_date    TEXT,
     PRIMARY KEY (student_id, course_code)
 );
 
@@ -56,9 +60,27 @@ def get_connection(path=DB_PATH):
 
 
 def create_tables(connection):
-    """Create all tables if they do not exist yet."""
+    """Create all tables if they do not exist yet, and upgrade an older database."""
     connection.executescript(SCHEMA)
+    add_enrollment_date_columns(connection)
     connection.commit()
+
+
+def add_enrollment_date_columns(connection):
+    """Add start_date and end_date to enrollments if an older database lacks them (BR-15).
+
+    CREATE TABLE IF NOT EXISTS does not change a table that already exists,
+    so an attendance.db made before this version needs ALTER TABLE.
+    The new columns are NULL for old rows, which keeps the old behaviour.
+    """
+    column_names = []
+    for column in connection.execute("PRAGMA table_info(enrollments)"):
+        column_names.append(column[1])  # Position 1 of each row is the column name.
+
+    if "start_date" not in column_names:
+        connection.execute("ALTER TABLE enrollments ADD COLUMN start_date TEXT")
+    if "end_date" not in column_names:
+        connection.execute("ALTER TABLE enrollments ADD COLUMN end_date TEXT")
 
 
 # ---------- Courses ----------
@@ -136,13 +158,64 @@ def find_students_by_name(connection, full_name):
     return matches
 
 
-def enroll_student(connection, student_id, course_code):
-    """Enroll a student in a course. Does nothing if already enrolled."""
+def enroll_student(connection, student_id, course_code, start_date=None, end_date=None):
+    """Enroll a student in a course. Does nothing if already enrolled.
+
+    start_date and end_date are 'YYYY-MM-DD' text or None (BR-15):
+    None as start means from the course's first session, None as end means still enrolled.
+    """
     connection.execute(
-        "INSERT OR IGNORE INTO enrollments (student_id, course_code) VALUES (?, ?)",
-        (student_id, course_code),
+        """
+        INSERT OR IGNORE INTO enrollments (student_id, course_code, start_date, end_date)
+        VALUES (?, ?, ?, ?)
+        """,
+        (student_id, course_code, start_date, end_date),
     )
     connection.commit()
+
+
+def get_enrollment(connection, student_id, course_code):
+    """Return the enrollment row (with start_date and end_date), or None if not enrolled."""
+    return connection.execute(
+        """
+        SELECT student_id, course_code, start_date, end_date
+        FROM enrollments
+        WHERE student_id = ? AND course_code = ?
+        """,
+        (student_id, course_code),
+    ).fetchone()
+
+
+def update_enrollment_dates(connection, student_id, course_code, start_date, end_date):
+    """Change the start and end dates of an existing enrollment (FR-24)."""
+    connection.execute(
+        """
+        UPDATE enrollments SET start_date = ?, end_date = ?
+        WHERE student_id = ? AND course_code = ?
+        """,
+        (start_date, end_date, student_id, course_code),
+    )
+    connection.commit()
+
+
+def count_records_outside_window(connection, student_id, course_code, start_date, end_date):
+    """Return how many saved records of a student in a course fall outside new dates.
+
+    A None start or end date means there is no limit on that side.
+    """
+    return count_rows(
+        connection,
+        """
+        SELECT COUNT(*)
+        FROM attendance
+        JOIN sessions ON sessions.session_id = attendance.session_id
+        WHERE attendance.student_id = ?
+          AND sessions.course_code = ?
+          AND ((? IS NOT NULL AND sessions.session_date < ?)
+               OR (? IS NOT NULL AND sessions.session_date > ?))
+        """,
+        (student_id, course_code, start_date, start_date, end_date, end_date),
+    )
 
 
 def is_enrolled(connection, student_id, course_code):
@@ -229,9 +302,11 @@ def get_status(connection, student_id, session_id):
 
 
 def record_attendance(connection, student_id, session_id, status, source=MANUAL_SOURCE):
-    """Save one status and return 'inserted', 'updated', 'unchanged' or 'not_enrolled'.
+    """Save one status and return what happened.
 
-    Only a student enrolled in the session's course can be recorded (BR-09).
+    Returns 'inserted', 'updated', 'unchanged', 'not_enrolled' or 'outside_enrollment'.
+    Only a student enrolled in the session's course can be recorded (BR-09), and only
+    for a session inside their enrollment dates (BR-15).
     There is only one record per student per session (BR-08):
     recording again for the same pair edits the existing record.
     An unchanged status is not rewritten (FR-08).
@@ -240,8 +315,14 @@ def record_attendance(connection, student_id, session_id, status, source=MANUAL_
 
     # A missing session is left to the foreign key, which raises an error (T14).
     if session is not None:
-        if not is_enrolled(connection, student_id, session["course_code"]):
+        enrollment = get_enrollment(connection, student_id, session["course_code"])
+        if enrollment is None:
             return "not_enrolled"
+        in_window = validation.is_in_enrollment_window(
+            session["session_date"], enrollment["start_date"], enrollment["end_date"]
+        )
+        if not in_window:
+            return "outside_enrollment"
 
     old_status = get_status(connection, student_id, session_id)
     recorded_at = datetime.now().isoformat(timespec="seconds")
@@ -272,11 +353,13 @@ def record_attendance(connection, student_id, session_id, status, source=MANUAL_
     return "updated"
 
 
-def import_records(connection, records, source):
+def import_records(connection, records, source, enrollment_starts):
     """Save validated import rows in one transaction and return how many were saved.
 
     Each record has student_id, full_name, course_code, session_id, session_date and status.
     The student is enrolled before attendance is saved, so BR-09 holds (IR-06).
+    enrollment_starts maps (student_id, course_code) to the start date of a NEW
+    enrollment (BR-15); an existing enrollment keeps its dates.
     If any row fails, the whole import is rolled back and nothing is saved.
     """
     recorded_at = datetime.now().isoformat(timespec="seconds")
@@ -296,9 +379,14 @@ def import_records(connection, records, source):
                 """,
                 (record["session_id"], record["course_code"], record["session_date"]),
             )
+            enrollment_key = (record["student_id"], record["course_code"])
             connection.execute(
-                "INSERT OR IGNORE INTO enrollments (student_id, course_code) VALUES (?, ?)",
-                (record["student_id"], record["course_code"]),
+                """
+                INSERT OR IGNORE INTO enrollments (student_id, course_code, start_date)
+                VALUES (?, ?, ?)
+                """,
+                (record["student_id"], record["course_code"],
+                 enrollment_starts[enrollment_key]),
             )
             # A plain INSERT: if the record already exists, the error cancels the import.
             connection.execute(
@@ -489,8 +577,10 @@ def delete_course(connection, course_code):
 
 
 def get_session_attendance(connection, session_id):
-    """Return every enrolled student of the session's course with their status.
+    """Return every student expected at the session with their status.
 
+    A student is expected if they are enrolled in the session's course and the
+    session date is inside their enrollment dates (BR-15).
     Students with no record yet have status None (shown later as Unknown).
     """
     return connection.execute(
@@ -503,6 +593,10 @@ def get_session_attendance(connection, session_id):
             ON attendance.student_id = students.student_id
             AND attendance.session_id = sessions.session_id
         WHERE sessions.session_id = ?
+          AND (enrollments.start_date IS NULL
+               OR sessions.session_date >= enrollments.start_date)
+          AND (enrollments.end_date IS NULL
+               OR sessions.session_date <= enrollments.end_date)
         ORDER BY students.student_id
         """,
         (session_id,),
@@ -510,21 +604,29 @@ def get_session_attendance(connection, session_id):
 
 
 def get_expected_records(connection):
-    """Return one row per enrolled student per session of their course.
+    """Return one row per expected student per session of their course.
 
-    Each row has student_id, full_name, course_code, session_id, session_date and status.
-    The status is None when nothing was recorded. Unknown is never stored (BR-12).
+    A student is expected only for sessions inside their enrollment dates (BR-15).
+    Each row has student_id, full_name, course_code, session_id, session_date, status,
+    enrollment_start and enrollment_end. The status is None when nothing was recorded.
+    Unknown is never stored (BR-12).
     """
     rows = connection.execute(
         """
         SELECT students.student_id, students.full_name, sessions.course_code,
-               sessions.session_id, sessions.session_date, attendance.status
+               sessions.session_id, sessions.session_date, attendance.status,
+               enrollments.start_date AS enrollment_start,
+               enrollments.end_date AS enrollment_end
         FROM enrollments
         JOIN students ON students.student_id = enrollments.student_id
         JOIN sessions ON sessions.course_code = enrollments.course_code
         LEFT JOIN attendance
             ON attendance.student_id = enrollments.student_id
             AND attendance.session_id = sessions.session_id
+        WHERE (enrollments.start_date IS NULL
+               OR sessions.session_date >= enrollments.start_date)
+          AND (enrollments.end_date IS NULL
+               OR sessions.session_date <= enrollments.end_date)
         ORDER BY sessions.session_date, sessions.session_id, students.student_id
         """
     ).fetchall()
