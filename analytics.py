@@ -10,6 +10,9 @@ PRESENT = "Present"
 ABSENT = "Absent"
 UNKNOWN = "Unknown"
 NOT_AVAILABLE = "N/A"
+ALL_COURSES = "All courses"
+DEFAULT_THRESHOLD = 75
+CHART_VALUE_COLUMN = "Attendance rate (%)"
 
 RECORD_COLUMNS = [
     "student_id",
@@ -130,3 +133,106 @@ def build_session_summary(frame):
 
     summary = pd.DataFrame(rows, columns=columns)
     return summary.sort_values(["session_date", "session_id"], ignore_index=True)
+
+
+# ---------- Filters (FR-12) ----------
+
+def get_date_bounds(frame):
+    """Return the earliest and latest session dates as text, or (None, None) if there are none."""
+    if frame.empty:
+        return None, None
+    return frame["session_date"].min(), frame["session_date"].max()
+
+
+def filter_records(frame, course_code, start_date, end_date):
+    """Return the rows for one course (or all courses) between two dates, both included.
+
+    Dates are 'YYYY-MM-DD' text, so comparing the text also compares the dates.
+    """
+    keep = (frame["session_date"] >= start_date) & (frame["session_date"] <= end_date)
+
+    if course_code != ALL_COURSES:
+        keep = keep & (frame["course_code"] == course_code)
+
+    return frame[keep].reset_index(drop=True)
+
+
+# ---------- Dashboard (FR-13 to FR-15) ----------
+
+def calculate_dashboard_metrics(frame):
+    """Return the number of students and sessions plus the counts and rates."""
+    metrics = summarize_frame(frame)
+    metrics["students"] = frame["student_id"].nunique()
+    metrics["sessions"] = frame["session_id"].nunique()
+    return metrics
+
+
+def build_rate_chart_data(frame):
+    """Return the attendance rate of each session in date order, ready for a chart (FR-14).
+
+    Sessions with no recorded status have no rate, so they are left out.
+    The label starts with the date, so the chart's alphabetical order is also date order.
+    """
+    session_summary = build_session_summary(frame)
+    labels = []
+    rates = []
+
+    for index, row in session_summary.iterrows():
+        if pd.isna(row["attendance_rate"]):
+            continue
+        labels.append(f"{row['session_date']} {row['session_id']}")
+        rates.append(row["attendance_rate"])
+
+    chart_data = pd.DataFrame({"Session": labels, CHART_VALUE_COLUMN: rates})
+    return chart_data.set_index("Session")
+
+
+def split_by_threshold(student_summary, threshold):
+    """Return (students below the threshold sorted by rate, students with no rate) (FR-15)."""
+    has_rate = student_summary["attendance_rate"].notna()
+
+    with_rate = student_summary[has_rate]
+    below = with_rate[with_rate["attendance_rate"] < threshold]
+    below = below.sort_values(["attendance_rate", "student_id"], ignore_index=True)
+
+    no_rate = student_summary[~has_rate].reset_index(drop=True)
+    return below, no_rate
+
+
+# ---------- Reports (FR-16, FR-17) ----------
+
+def build_attendance_report(frame):
+    """Return the filtered attendance table with readable column names (FR-16)."""
+    report = frame.sort_values(["session_date", "session_id", "student_id"], ignore_index=True)
+    report = report[["student_id", "full_name", "course_code", "session_id", "session_date", "status"]]
+    return report.rename(columns={
+        "student_id": "Student ID",
+        "full_name": "Full name",
+        "course_code": "Course",
+        "session_id": "Session",
+        "session_date": "Date",
+        "status": "Status",
+    })
+
+
+def format_summary_table(student_summary):
+    """Return a copy of a student summary with rates as text like '87.50%' or 'N/A'.
+
+    The screen and the CSV download both use this table, so they match exactly (FR-17).
+    """
+    table = student_summary.copy()
+    rate_texts = []
+    completeness_texts = []
+
+    for index, row in table.iterrows():
+        rate_texts.append(format_rate(row["attendance_rate"]))
+        completeness_texts.append(format_rate(row["completeness"]))
+
+    table["attendance_rate"] = rate_texts
+    table["completeness"] = completeness_texts
+    return table.rename(columns={
+        "student_id": "Student ID",
+        "full_name": "Full name",
+        "attendance_rate": "Attendance rate",
+        "completeness": "Completeness",
+    })

@@ -1,4 +1,4 @@
-"""Tests for analytics.py and database.py (T06, T07, T13 and T14 in Section 10).
+"""Tests for analytics.py and database.py (T06, T07, T13, T14, and the Stage 4 filters).
 
 Every test uses a temporary in-memory database, never attendance.db.
 """
@@ -8,6 +8,7 @@ import unittest
 
 import analytics
 import database
+import seed_demo
 
 TEST_DB_PATH = ":memory:"
 
@@ -141,6 +142,135 @@ class TestRecordAttendance(DatabaseTestCase):
         """T14 (Section 3): get_connection() switches foreign keys on."""
         value = self.connection.execute("PRAGMA foreign_keys").fetchone()[0]
         self.assertEqual(value, 1)
+
+
+class TestFilteredCalculations(unittest.TestCase):
+    """Dashboard and report calculations on the seed_demo.py data, in an in-memory database."""
+
+    def setUp(self):
+        """Load the demo data and build the records frame."""
+        self.connection = seed_demo.reset_database(TEST_DB_PATH)
+        seed_demo.add_demo_data(self.connection)
+        seed_demo.add_demo_attendance(self.connection)
+        self.records = self.load_records()
+
+    def tearDown(self):
+        """Close the database after each test."""
+        self.connection.close()
+
+    def load_records(self):
+        """Return the expected records of the test database as a frame."""
+        return analytics.build_records_frame(database.get_expected_records(self.connection))
+
+    def filter_all(self):
+        """Return the records for All courses and the full date range."""
+        earliest, latest = analytics.get_date_bounds(self.records)
+        return analytics.filter_records(self.records, analytics.ALL_COURSES, earliest, latest)
+
+    def test_seed_totals_all_courses_full_range(self):
+        """FR-12, FR-13 (BR-10 to BR-12): seed data gives 63, 9, 4, 87.50% and 94.74%."""
+        earliest, latest = analytics.get_date_bounds(self.records)
+        self.assertEqual((earliest, latest), ("2026-09-07", "2026-09-30"))
+
+        metrics = analytics.calculate_dashboard_metrics(self.filter_all())
+
+        self.assertEqual(metrics["present"], 63)
+        self.assertEqual(metrics["absent"], 9)
+        self.assertEqual(metrics["unknown"], 4)
+        self.assertEqual(analytics.format_rate(metrics["attendance_rate"]), "87.50%")
+        self.assertEqual(analytics.format_rate(metrics["completeness"]), "94.74%")
+        self.assertEqual(metrics["students"], 12)
+        self.assertEqual(metrics["sessions"], 8)
+
+    def test_filter_one_course(self):
+        """FR-12: PY101 only has 10 students x 4 sessions: 33 Present, 5 Absent, 2 Unknown."""
+        filtered = analytics.filter_records(self.records, "PY101", "2026-09-01", "2026-09-30")
+        metrics = analytics.calculate_dashboard_metrics(filtered)
+
+        self.assertEqual(metrics["present"], 33)
+        self.assertEqual(metrics["absent"], 5)
+        self.assertEqual(metrics["unknown"], 2)
+        self.assertEqual(metrics["attendance_rate"], 86.84)
+        self.assertEqual(metrics["completeness"], 95.0)
+        self.assertEqual(metrics["students"], 10)
+        self.assertEqual(metrics["sessions"], 4)
+
+    def test_filter_date_range_includes_both_ends(self):
+        """FR-12: 2026-09-07 to 2026-09-14 keeps PY101-W1, DS102-W1 and PY101-W2."""
+        filtered = analytics.filter_records(
+            self.records, analytics.ALL_COURSES, "2026-09-07", "2026-09-14"
+        )
+        metrics = analytics.calculate_dashboard_metrics(filtered)
+
+        self.assertEqual(metrics["sessions"], 3)
+        self.assertEqual(metrics["present"], 25)
+        self.assertEqual(metrics["absent"], 3)
+        self.assertEqual(metrics["unknown"], 1)
+
+    def test_filter_with_no_sessions(self):
+        """FR-18: a date range with no sessions gives empty data and N/A, not an error."""
+        filtered = analytics.filter_records(
+            self.records, analytics.ALL_COURSES, "2027-01-01", "2027-01-31"
+        )
+        metrics = analytics.calculate_dashboard_metrics(filtered)
+
+        self.assertTrue(filtered.empty)
+        self.assertEqual(metrics["sessions"], 0)
+        self.assertEqual(analytics.format_rate(metrics["attendance_rate"]), "N/A")
+        self.assertTrue(analytics.build_rate_chart_data(filtered).empty)
+
+    def test_chart_data_in_date_order(self):
+        """FR-14: the chart has one rate per session, in date order."""
+        chart_data = analytics.build_rate_chart_data(self.filter_all())
+        labels = list(chart_data.index)
+
+        self.assertEqual(len(labels), 8)
+        self.assertEqual(labels[0], "2026-09-07 PY101-W1")
+        self.assertEqual(labels[1], "2026-09-09 DS102-W1")
+        self.assertEqual(labels, sorted(labels))
+        self.assertEqual(chart_data[analytics.CHART_VALUE_COLUMN].iloc[0], 90.0)
+
+    def test_students_below_threshold_sorted(self):
+        """FR-15: below 75% are 002 (25%), 011 (50%) and 012 (66.67%), lowest first."""
+        summary = analytics.build_student_summary(self.filter_all())
+        below, no_rate = analytics.split_by_threshold(summary, analytics.DEFAULT_THRESHOLD)
+
+        self.assertEqual(list(below["student_id"]), ["002", "011", "012"])
+        self.assertEqual(list(below["attendance_rate"]), [25.0, 50.0, 66.67])
+        self.assertTrue(no_rate.empty)
+
+    def test_student_without_records_listed_separately(self):
+        """FR-15 (BR-10): a student with no recorded sessions has rate N/A and is listed apart."""
+        database.add_student(self.connection, "013", "Alice Uwimana")
+        database.enroll_student(self.connection, "013", "PY101")
+        self.records = self.load_records()
+
+        summary = analytics.build_student_summary(self.filter_all())
+        below, no_rate = analytics.split_by_threshold(summary, analytics.DEFAULT_THRESHOLD)
+
+        self.assertEqual(list(no_rate["student_id"]), ["013"])
+        self.assertNotIn("013", list(below["student_id"]))
+
+        table = analytics.format_summary_table(no_rate)
+        self.assertEqual(table["Attendance rate"].iloc[0], "N/A")
+        self.assertEqual(table["Completeness"].iloc[0], "0.00%")
+
+    def test_reports_tables(self):
+        """FR-16, FR-17: the report tables have the expected columns and one row per record."""
+        filtered = self.filter_all()
+
+        report = analytics.build_attendance_report(filtered)
+        self.assertEqual(
+            list(report.columns),
+            ["Student ID", "Full name", "Course", "Session", "Date", "Status"],
+        )
+        self.assertEqual(len(report), 76)
+
+        summary_table = analytics.format_summary_table(analytics.build_student_summary(filtered))
+        self.assertEqual(len(summary_table), 12)
+        row_002 = summary_table[summary_table["Student ID"] == "002"].iloc[0]
+        self.assertEqual(row_002["Attendance rate"], "25.00%")
+        self.assertEqual(row_002["Completeness"], "100.00%")
 
 
 if __name__ == "__main__":

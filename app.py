@@ -5,6 +5,7 @@ SQL lives in database.py, and calculations live in analytics.py.
 """
 
 import sqlite3
+from datetime import date
 
 import pandas as pd
 import streamlit as st
@@ -17,6 +18,13 @@ import validation
 STATUS_OPTIONS = ["Present", "Absent"]
 NO_COURSES_MESSAGE = "No courses yet. Create a course first."
 NO_STUDENTS_MESSAGE = "No students yet. Add a student first."
+NO_DATA_MESSAGE = (
+    "No sessions with enrolled students yet. Create a course, a session and a student "
+    "in Manage Attendance, or import a CSV file."
+)
+NO_MATCH_MESSAGE = (
+    "No sessions match these filters. Choose another course or a wider date range."
+)
 
 
 # ---------- Helpers ----------
@@ -542,12 +550,151 @@ def show_import_tab(connection):
             confirm_import(connection, validation_result)
 
 
+# ---------- FR-12: filters for the Dashboard and Reports ----------
+
+def show_filters(connection):
+    """Show the course and date filters in the sidebar.
+
+    Returns (filtered records, text describing the filters). The records are None
+    when there is nothing to show yet; the text then explains why.
+    """
+    st.sidebar.header("Dashboard and Reports filters")
+
+    all_records = analytics.build_records_frame(database.get_expected_records(connection))
+    earliest, latest = analytics.get_date_bounds(all_records)
+    if earliest is None:
+        return None, NO_DATA_MESSAGE
+
+    course_options = [analytics.ALL_COURSES]
+    for course in database.get_courses(connection):
+        course_options.append(course["course_code"])
+    course_code = st.sidebar.selectbox("Course", course_options)
+
+    chosen_dates = st.sidebar.date_input(
+        "Date range",
+        value=(date.fromisoformat(earliest), date.fromisoformat(latest)),
+    )
+    # While the user is picking, the range has only a start date.
+    if len(chosen_dates) != 2:
+        return None, "Choose an end date to finish the date range."
+
+    start_date = chosen_dates[0].isoformat()
+    end_date = chosen_dates[1].isoformat()
+
+    filtered = analytics.filter_records(all_records, course_code, start_date, end_date)
+    filter_text = f"Showing: {course_code}, from {start_date} to {end_date}."
+    return filtered, filter_text
+
+
+def has_data_to_show(filtered_records, filter_text):
+    """Show the filters, or a message instead of empty tables (FR-18). Return True if there is data."""
+    if filtered_records is None:
+        st.info(filter_text)
+        return False
+
+    st.caption(filter_text)
+
+    if filtered_records.empty:
+        st.info(NO_MATCH_MESSAGE)
+        return False
+
+    return True
+
+
+# ---------- FR-13 to FR-15: Dashboard ----------
+
+def show_metrics(filtered_records):
+    """Show the seven dashboard numbers (FR-13)."""
+    metrics = analytics.calculate_dashboard_metrics(filtered_records)
+
+    first_row = st.columns(4)
+    first_row[0].metric("Students", metrics["students"])
+    first_row[1].metric("Sessions", metrics["sessions"])
+    first_row[2].metric("Attendance rate", analytics.format_rate(metrics["attendance_rate"]))
+    first_row[3].metric("Completeness", analytics.format_rate(metrics["completeness"]))
+
+    second_row = st.columns(4)
+    second_row[0].metric("Present", metrics["present"])
+    second_row[1].metric("Absent", metrics["absent"])
+    second_row[2].metric("Unknown", metrics["unknown"])
+
+
+def show_rate_chart(filtered_records):
+    """Show one chart: attendance rate by session in date order (FR-14)."""
+    st.subheader("Attendance rate by session")
+
+    chart_data = analytics.build_rate_chart_data(filtered_records)
+    if chart_data.empty:
+        st.info("No attendance has been recorded for these sessions yet, so there is nothing to chart.")
+        return
+
+    st.bar_chart(chart_data, y=analytics.CHART_VALUE_COLUMN)
+
+
+def show_threshold_list(filtered_records):
+    """List students below a chosen attendance rate, lowest first (FR-15)."""
+    st.subheader("Students below a threshold")
+
+    threshold = st.slider(
+        "Attendance rate threshold (%)", min_value=0, max_value=100,
+        value=analytics.DEFAULT_THRESHOLD,
+    )
+
+    student_summary = analytics.build_student_summary(filtered_records)
+    below, no_rate = analytics.split_by_threshold(student_summary, threshold)
+
+    if below.empty:
+        st.success(f"No students are below {threshold}%.")
+    else:
+        st.dataframe(analytics.format_summary_table(below), hide_index=True, width="stretch")
+
+    if not no_rate.empty:
+        st.markdown("**Students with no recorded sessions** (attendance rate N/A)")
+        st.dataframe(analytics.format_summary_table(no_rate), hide_index=True, width="stretch")
+
+
+def show_dashboard_tab(filtered_records, filter_text):
+    """Show the Dashboard tab."""
+    if not has_data_to_show(filtered_records, filter_text):
+        return
+
+    show_metrics(filtered_records)
+    st.divider()
+    show_rate_chart(filtered_records)
+    st.divider()
+    show_threshold_list(filtered_records)
+
+
+# ---------- FR-16 and FR-17: Reports ----------
+
+def show_table_with_download(table, file_name, button_key):
+    """Show a table and a CSV download made from that same table (FR-17)."""
+    st.dataframe(table, hide_index=True, width="stretch")
+    st.download_button(
+        "Download as CSV",
+        data=table.to_csv(index=False),
+        file_name=file_name,
+        mime="text/csv",
+        key=button_key,
+    )
+
+
+def show_reports_tab(filtered_records, filter_text):
+    """Show the Reports tab: the attendance table and the per-student summary (FR-16)."""
+    if not has_data_to_show(filtered_records, filter_text):
+        return
+
+    st.subheader("Attendance records")
+    attendance_report = analytics.build_attendance_report(filtered_records)
+    show_table_with_download(attendance_report, "attendance_report.csv", "download_attendance")
+
+    st.subheader("Per-student summary")
+    student_summary = analytics.build_student_summary(filtered_records)
+    summary_table = analytics.format_summary_table(student_summary)
+    show_table_with_download(summary_table, "student_summary.csv", "download_summary")
+
+
 # ---------- Tabs ----------
-
-def show_coming_soon(tab_name):
-    """Show a placeholder for a tab that is built in a later stage."""
-    st.info(f"{tab_name}: Coming soon.")
-
 
 def show_manage_tab(connection):
     """Show every Manage Attendance section, one after another."""
@@ -576,17 +723,21 @@ def main():
         ["Dashboard", "Manage Attendance", "Import & Validate", "Reports"]
     )
 
-    with dashboard_tab:
-        show_coming_soon("Dashboard")
-
+    # The tabs that change data run first, so the Dashboard and Reports
+    # include anything saved in this same run. The tab order on screen stays the same.
     with manage_tab:
         show_manage_tab(connection)
 
     with import_tab:
         show_import_tab(connection)
 
+    filtered_records, filter_text = show_filters(connection)
+
+    with dashboard_tab:
+        show_dashboard_tab(filtered_records, filter_text)
+
     with reports_tab:
-        show_coming_soon("Reports")
+        show_reports_tab(filtered_records, filter_text)
 
     connection.close()
 
