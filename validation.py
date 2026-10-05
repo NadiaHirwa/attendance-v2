@@ -33,6 +33,16 @@ SESSION_ID_ERROR = (
 DATE_ERROR = "Invalid date. Expected a real date in YYYY-MM-DD format (for example 2026-09-15)."
 STATUS_ERROR = "Invalid status. Expected P, A, Present or Absent."
 
+# Messages for values that are valid but already used. {} is filled in with the value.
+COURSE_EXISTS_ERROR = "Course {} already exists. Enter a different course code."
+STUDENT_EXISTS_ERROR = "Student ID {} is already used. Enter a different student ID."
+SESSION_EXISTS_ERROR = "Session {} already exists. Session IDs must be unique across all courses."
+ALREADY_ENROLLED_ERROR = "Student {} is already enrolled in {}. Choose a different course."
+DUPLICATE_NAME_WARNING = (
+    "A student named {} already exists (ID {}). If this is a different person, "
+    "tick the confirmation box and submit again."
+)
+
 
 def is_valid_student_id(student_id):
     """Return True if student_id is exactly 3 ASCII digits from 001 to 999 (BR-01)."""
