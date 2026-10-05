@@ -121,6 +121,15 @@ class TestRecordAttendance(DatabaseTestCase):
 
         self.assertEqual(result, "unchanged")
 
+    def test_not_enrolled_is_not_saved(self):
+        """BR-09: a student not enrolled in the session's course is not recorded."""
+        database.add_student(self.connection, "002", "Jean-Paul Mugisha")
+
+        result = database.record_attendance(self.connection, "002", "PY101-W1", "Present")
+
+        self.assertEqual(result, "not_enrolled")
+        self.assertIsNone(database.get_status(self.connection, "002", "PY101-W1"))
+
     def test_t14_foreign_keys_are_on(self):
         """T14 (Section 3): attendance for a missing session raises an error."""
         self.add_enrolled_student("001", "Nadia Hirwa")

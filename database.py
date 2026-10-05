@@ -217,12 +217,20 @@ def get_status(connection, student_id, session_id):
 
 
 def record_attendance(connection, student_id, session_id, status, source=MANUAL_SOURCE):
-    """Save one status and return 'inserted', 'updated' or 'unchanged'.
+    """Save one status and return 'inserted', 'updated', 'unchanged' or 'not_enrolled'.
 
+    Only a student enrolled in the session's course can be recorded (BR-09).
     There is only one record per student per session (BR-08):
     recording again for the same pair edits the existing record.
     An unchanged status is not rewritten (FR-08).
     """
+    session = get_session(connection, session_id)
+
+    # A missing session is left to the foreign key, which raises an error (T14).
+    if session is not None:
+        if not is_enrolled(connection, student_id, session["course_code"]):
+            return "not_enrolled"
+
     old_status = get_status(connection, student_id, session_id)
     recorded_at = datetime.now().isoformat(timespec="seconds")
 
