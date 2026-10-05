@@ -684,7 +684,18 @@ def show_status_chart(filtered_records):
         st.info("No sessions to show for these filters.")
         return
 
-    chart_data = analytics.make_status_chart_long(status_data)
+    chosen_statuses = st.multiselect(
+        "Show statuses", analytics.STATUS_ORDER, default=analytics.STATUS_ORDER,
+        key="status_filter",
+    )
+    if not chosen_statuses:
+        st.info("No statuses selected. Choose at least one status to show the chart.")
+        return
+
+    all_statuses = analytics.make_status_chart_long(status_data)
+    chart_data = analytics.keep_statuses(all_statuses, chosen_statuses)
+    # The colour scale always lists all three statuses, so each keeps its colour
+    # whatever is selected.
     chart = alt.Chart(chart_data).mark_bar().encode(
         # sort=None keeps the date order from analytics.py, like the rate chart.
         x=alt.X(analytics.CHART_LABEL_COLUMN, type="nominal", sort=None,

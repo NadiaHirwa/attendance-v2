@@ -328,6 +328,25 @@ class TestFilteredCalculations(SeedDataTestCase):
         )
         self.assertEqual(list(first_session[analytics.CHART_COUNT_COLUMN]), [9, 1, 0])
 
+    def test_status_chart_keep_statuses(self):
+        """FR-20: the status filter keeps only the chosen statuses, in stack order."""
+        long_data = analytics.make_status_chart_long(
+            analytics.build_status_chart_data(self.filter_all())
+        )
+
+        only_unknown = analytics.keep_statuses(long_data, ["Unknown"])
+        self.assertEqual(len(only_unknown), 8)
+        self.assertEqual(set(only_unknown[analytics.CHART_STATUS_COLUMN]), {"Unknown"})
+        self.assertEqual(only_unknown[analytics.CHART_COUNT_COLUMN].sum(), 4)
+
+        two_statuses = analytics.keep_statuses(long_data, ["Unknown", "Present"])
+        self.assertEqual(len(two_statuses), 16)
+        self.assertEqual(
+            list(two_statuses[analytics.CHART_STATUS_COLUMN].iloc[0:2]), ["Present", "Unknown"]
+        )
+
+        self.assertTrue(analytics.keep_statuses(long_data, []).empty)
+
     def test_students_below_threshold_sorted(self):
         """FR-15: below 75% are 002 (25%), 011 (50%) and 012 (66.67%), lowest first."""
         summary = analytics.build_student_summary(self.filter_all())

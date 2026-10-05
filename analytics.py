@@ -262,6 +262,12 @@ def make_status_chart_long(status_chart_data):
     return pd.DataFrame(rows, columns=columns)
 
 
+def keep_statuses(status_chart_long, statuses):
+    """Return only the rows of the long status chart table whose status is in statuses."""
+    keep = status_chart_long[CHART_STATUS_COLUMN].isin(statuses)
+    return status_chart_long[keep].reset_index(drop=True)
+
+
 def split_by_threshold(student_summary, threshold):
     """Return (students below the threshold sorted by rate, students with no rate) (FR-15)."""
     has_rate = student_summary["attendance_rate"].notna()
