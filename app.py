@@ -7,6 +7,7 @@ SQL lives in database.py, and calculations live in analytics.py.
 import sqlite3
 from datetime import date
 
+import altair as alt
 import pandas as pd
 import streamlit as st
 
@@ -655,7 +656,19 @@ def show_rate_chart(filtered_records):
         )
         return
 
-    st.bar_chart(chart_data, y=analytics.CHART_VALUE_COLUMN)
+    chart = alt.Chart(chart_data).mark_bar().encode(
+        # sort=None keeps the date order from analytics.py instead of sorting the labels.
+        x=alt.X(analytics.CHART_LABEL_COLUMN, type="nominal", sort=None,
+                axis=alt.Axis(labelAngle=-45)),
+        y=alt.Y(analytics.CHART_VALUE_COLUMN, type="quantitative",
+                scale=alt.Scale(domain=[0, 100])),
+        color=alt.Color(analytics.CHART_COURSE_COLUMN, type="nominal"),
+    )
+    st.altair_chart(chart, width="stretch")
+    st.caption(
+        "One bar per session, coloured by course. "
+        "Use the course and date filters to focus on fewer sessions."
+    )
 
 
 def show_threshold_list(filtered_records):

@@ -224,15 +224,56 @@ class TestFilteredCalculations(SeedDataTestCase):
         self.assertTrue(analytics.build_rate_chart_data(filtered).empty)
 
     def test_chart_data_in_date_order(self):
-        """FR-14: the chart has one rate per session, in date order."""
+        """FR-14: one rate per session in date order, with short labels and the course."""
         chart_data = analytics.build_rate_chart_data(self.filter_all())
-        labels = list(chart_data.index)
+        labels = list(chart_data[analytics.CHART_LABEL_COLUMN])
+        courses = list(chart_data[analytics.CHART_COURSE_COLUMN])
 
         self.assertEqual(len(labels), 8)
-        self.assertEqual(labels[0], "2026-09-07 PY101-W1")
-        self.assertEqual(labels[1], "2026-09-09 DS102-W1")
+        self.assertEqual(labels[0], "09-07 PY101-W1")
+        self.assertEqual(labels[1], "09-09 DS102-W1")
+        self.assertEqual(courses[0], "PY101")
+        self.assertEqual(courses[1], "DS102")
         self.assertEqual(labels, sorted(labels))
         self.assertEqual(chart_data[analytics.CHART_VALUE_COLUMN].iloc[0], 90.0)
+
+    def test_chart_same_date_two_courses(self):
+        """FR-14: two sessions on the same date in different courses give two rows,
+        in date-then-session order."""
+        database.add_session(self.connection, "DS102-W0", "DS102", "2026-09-07")
+        database.record_attendance(self.connection, "004", "DS102-W0", "Present")
+        self.records = self.load_records()
+
+        chart_data = analytics.build_rate_chart_data(self.filter_all())
+        labels = list(chart_data[analytics.CHART_LABEL_COLUMN])
+        courses = list(chart_data[analytics.CHART_COURSE_COLUMN])
+
+        self.assertEqual(len(labels), 9)
+        self.assertEqual(labels[0], "09-07 DS102-W0")
+        self.assertEqual(labels[1], "09-07 PY101-W1")
+        self.assertEqual(courses[0], "DS102")
+        self.assertEqual(courses[1], "PY101")
+        self.assertEqual(labels[2], "09-09 DS102-W1")
+
+    def test_chart_labels_show_year_across_years(self):
+        """FR-14: when sessions are in more than one year, the labels include the year."""
+        database.add_session(self.connection, "PY101-W99", "PY101", "2027-01-11")
+        database.record_attendance(self.connection, "001", "PY101-W99", "Present")
+        self.records = self.load_records()
+
+        chart_data = analytics.build_rate_chart_data(self.filter_all())
+        labels = list(chart_data[analytics.CHART_LABEL_COLUMN])
+
+        self.assertEqual(labels[0], "2026-09-07 PY101-W1")
+        self.assertEqual(labels[-1], "2027-01-11 PY101-W99")
+
+    def test_chart_one_course(self):
+        """FR-14: with one course selected, every bar belongs to that course."""
+        filtered = analytics.filter_records(self.records, "PY101", "2026-09-01", "2026-09-30")
+        chart_data = analytics.build_rate_chart_data(filtered)
+
+        self.assertEqual(len(chart_data), 4)
+        self.assertEqual(set(chart_data[analytics.CHART_COURSE_COLUMN]), {"PY101"})
 
     def test_students_below_threshold_sorted(self):
         """FR-15: below 75% are 002 (25%), 011 (50%) and 012 (66.67%), lowest first."""

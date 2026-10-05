@@ -13,6 +13,8 @@ NOT_AVAILABLE = "N/A"
 ALL_COURSES = "All courses"
 DEFAULT_THRESHOLD = 75
 CHART_VALUE_COLUMN = "Attendance rate (%)"
+CHART_LABEL_COLUMN = "Session"
+CHART_COURSE_COLUMN = "Course"
 
 RECORD_COLUMNS = [
     "student_id",
@@ -167,24 +169,43 @@ def calculate_dashboard_metrics(frame):
     return metrics
 
 
+def make_session_label(session_date, session_id, include_year):
+    """Return a short chart label like '09-07 PY101-W1', or '2026-09-07 PY101-W1' with the year."""
+    if include_year:
+        return f"{session_date} {session_id}"
+    # session_date is 'YYYY-MM-DD', so [5:] keeps only 'MM-DD'.
+    return f"{session_date[5:]} {session_id}"
+
+
 def build_rate_chart_data(frame):
-    """Return the attendance rate of each session in date order, ready for a chart (FR-14).
+    """Return one row per session (label, course, rate) in date order for the chart (FR-14).
 
+    Sessions on the same date are ordered by session ID.
     Sessions with no recorded status have no rate, so they are left out.
-    The label starts with the date, so the chart's alphabetical order is also date order.
+    Labels show the year only when the sessions are in more than one year.
     """
+    columns = [CHART_LABEL_COLUMN, CHART_COURSE_COLUMN, CHART_VALUE_COLUMN]
     session_summary = build_session_summary(frame)
-    labels = []
-    rates = []
+    if session_summary.empty:
+        return pd.DataFrame(columns=columns)
 
+    # The first 4 characters of 'YYYY-MM-DD' are the year.
+    first_year = session_summary["session_date"].min()[:4]
+    last_year = session_summary["session_date"].max()[:4]
+    include_year = first_year != last_year
+
+    rows = []
     for index, row in session_summary.iterrows():
         if pd.isna(row["attendance_rate"]):
             continue
-        labels.append(f"{row['session_date']} {row['session_id']}")
-        rates.append(row["attendance_rate"])
+        label = make_session_label(row["session_date"], row["session_id"], include_year)
+        rows.append({
+            CHART_LABEL_COLUMN: label,
+            CHART_COURSE_COLUMN: row["course_code"],
+            CHART_VALUE_COLUMN: row["attendance_rate"],
+        })
 
-    chart_data = pd.DataFrame({"Session": labels, CHART_VALUE_COLUMN: rates})
-    return chart_data.set_index("Session")
+    return pd.DataFrame(rows, columns=columns)
 
 
 def split_by_threshold(student_summary, threshold):
