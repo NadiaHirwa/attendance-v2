@@ -113,10 +113,10 @@ session_id,course_code,session_date,student_id,full_name,status
 | FR-13 | Dashboard | Show metrics: students, sessions, Present, Absent, Unknown, attendance rate, completeness. |
 | FR-14 | Dashboard | Show one chart: attendance rate by session, in date order. |
 | FR-15 | Dashboard | List students below a chosen threshold (slider, default 75%), sorted by rate. |
-| FR-16 | Reports | Show the filtered attendance table (student, course, session, date, status) and a per-student summary (Present, Absent, Unknown, rate, completeness). |
+| FR-16 | Reports | A "Student" selector at the top defaults to "All students", which shows the overall Present, Absent, Unknown, rate and completeness, a per-student summary (Present, Absent, Unknown, rate, completeness), and the filtered attendance table (student, course, session, date, status). |
 | FR-17 | Reports | Download both tables as CSV. **Downloads match exactly what is on screen.** |
 | FR-18 | All | Show a clear message instead of an empty table or chart when there is no data. |
-| FR-19 | Reports | Single student report: choose a student ("ID - Name"); using the course and date filters, show their Present, Absent, Unknown, attendance rate and completeness, a per-course breakdown when they are in more than one course, and their session history (session, course, date, status) in date order with missing records shown as Unknown. The history can be downloaded as CSV, matching the screen. |
+| FR-19 | Reports | Single student report: choosing a student ("ID - Name") in the FR-16 selector replaces the All students view; using the course and date filters, show their Present, Absent, Unknown, attendance rate and completeness, a per-course breakdown when they are in more than one course, and their session history (session, course, date, status) in date order with missing records shown as Unknown. The history can be downloaded as CSV, matching the screen. |
 | FR-20 | Dashboard | Show a second chart below the FR-14 chart, "Recording status by session": one stacked bar per session with its Present (blue), Absent (orange) and Unknown (grey) counts, using the same filters, labels and session order as FR-14. Sessions with no records are included as all Unknown. Each bar's total equals the students enrolled in that session's course. |
 
 ## 7. Non-functional requirements

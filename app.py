@@ -22,6 +22,7 @@ STATUS_OPTIONS = ["Present", "Absent"]
 STATUS_COLORS = ["#0072B2", "#E69F00", "#999999"]
 # Width in pixels, so the longest import reasons fit without being cut off.
 REASON_COLUMN_WIDTH = 1500
+ALL_STUDENTS = "All students"
 NO_COURSES_MESSAGE = "No courses yet. Create a course first."
 NO_STUDENTS_MESSAGE = "No students yet. Add a student first."
 NO_DATA_MESSAGE = (
@@ -750,28 +751,41 @@ def show_table_with_download(table, file_name, button_key):
 
 
 def show_reports_tab(connection, filtered_records, filter_text):
-    """Show the Reports tab: attendance table, per-student summary, one student (FR-16, FR-19)."""
+    """Show the Reports tab: all students by default, or one chosen student (FR-16, FR-19)."""
     if not has_data_to_show(filtered_records, filter_text):
         return
 
-    st.subheader("Attendance records")
-    attendance_report = analytics.build_attendance_report(filtered_records)
-    show_table_with_download(attendance_report, "attendance_report.csv", "download_attendance")
+    student_choices = get_student_choices(connection)
+    options = [ALL_STUDENTS] + list(student_choices)
+    student_label = st.selectbox("Student", options, key="report_student")
 
-    st.subheader("Per-student summary")
+    if student_label == ALL_STUDENTS:
+        show_all_students_report(filtered_records)
+    else:
+        student_id = student_choices[student_label]
+        show_single_student_report(student_id, student_label, filtered_records)
+
+
+def show_all_students_report(filtered_records):
+    """Show the overall numbers, the per-student summary and the attendance records (FR-16)."""
+    st.subheader("All students")
+    show_summary_metrics(filtered_records)
+
+    st.markdown("**Per-student summary**")
     student_summary = analytics.build_student_summary(filtered_records)
     summary_table = analytics.format_summary_table(student_summary)
     show_table_with_download(summary_table, "student_summary.csv", "download_summary")
 
-    st.divider()
-    show_single_student_report(connection, filtered_records)
+    st.markdown("**Attendance records**")
+    attendance_report = analytics.build_attendance_report(filtered_records)
+    show_table_with_download(attendance_report, "attendance_report.csv", "download_attendance")
 
 
 # ---------- FR-19: single student report ----------
 
-def show_student_metrics(student_records):
-    """Show Present, Absent, Unknown, attendance rate and completeness for one student."""
-    rates = analytics.summarize_frame(student_records)
+def show_summary_metrics(records):
+    """Show Present, Absent, Unknown, attendance rate and completeness for some records."""
+    rates = analytics.summarize_frame(records)
 
     metric_columns = st.columns(5)
     metric_columns[0].metric("Present", rates["present"])
@@ -781,13 +795,9 @@ def show_student_metrics(student_records):
     metric_columns[4].metric("Completeness", analytics.format_rate(rates["completeness"]))
 
 
-def show_single_student_report(connection, filtered_records):
+def show_single_student_report(student_id, student_label, filtered_records):
     """Show one student's numbers, courses and session history, using the filters (FR-19)."""
-    st.subheader("Single student report")
-
-    student_choices = get_student_choices(connection)
-    student_label = st.selectbox("Student", list(student_choices), key="report_student")
-    student_id = student_choices[student_label]
+    st.subheader(f"Report for {student_label}")
 
     student_records = analytics.filter_student(filtered_records, student_id)
     if student_records.empty:
@@ -797,7 +807,7 @@ def show_single_student_report(connection, filtered_records):
         )
         return
 
-    show_student_metrics(student_records)
+    show_summary_metrics(student_records)
 
     course_summary = analytics.build_course_summary(student_records)
     if len(course_summary) > 1:
