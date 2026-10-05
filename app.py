@@ -239,14 +239,22 @@ def build_attendance_table(connection, session_id):
 
 def save_attendance_table(connection, session_id, table):
     """Save every chosen status and return counts of what happened."""
-    counts = {"inserted": 0, "updated": 0, "unchanged": 0, "not_enrolled": 0, "blank": 0}
+    counts = {
+        "inserted": 0, "updated": 0, "unchanged": 0, "not_enrolled": 0,
+        "blank": 0, "cleared": 0,
+    }
 
     for index, row in table.iterrows():
         status = row["status"]
 
-        # A blank status stays Unknown: nothing is saved for that student.
+        # A blank status saves nothing. Records cannot be deleted, so if the
+        # student already had a saved status, that status is kept.
         if status not in STATUS_OPTIONS:
-            counts["blank"] += 1
+            saved_status = database.get_status(connection, row["student_id"], session_id)
+            if saved_status is None:
+                counts["blank"] += 1
+            else:
+                counts["cleared"] += 1
             continue
 
         result = database.record_attendance(connection, row["student_id"], session_id, status)
@@ -265,6 +273,12 @@ def show_save_result(counts):
 
     if counts["blank"] > 0:
         st.info(f"{counts['blank']} student(s) left blank. They stay Unknown.")
+
+    if counts["cleared"] > 0:
+        st.warning(
+            f"{counts['cleared']} saved status(es) were cleared on screen but kept. "
+            "Records cannot be deleted in this version."
+        )
 
     if counts["not_enrolled"] > 0:
         st.error(
