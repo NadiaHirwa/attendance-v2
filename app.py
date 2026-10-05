@@ -706,8 +706,8 @@ def show_table_with_download(table, file_name, button_key):
     )
 
 
-def show_reports_tab(filtered_records, filter_text):
-    """Show the Reports tab: the attendance table and the per-student summary (FR-16)."""
+def show_reports_tab(connection, filtered_records, filter_text):
+    """Show the Reports tab: attendance table, per-student summary, one student (FR-16, FR-19)."""
     if not has_data_to_show(filtered_records, filter_text):
         return
 
@@ -719,6 +719,52 @@ def show_reports_tab(filtered_records, filter_text):
     student_summary = analytics.build_student_summary(filtered_records)
     summary_table = analytics.format_summary_table(student_summary)
     show_table_with_download(summary_table, "student_summary.csv", "download_summary")
+
+    st.divider()
+    show_single_student_report(connection, filtered_records)
+
+
+# ---------- FR-19: single student report ----------
+
+def show_student_metrics(student_records):
+    """Show Present, Absent, Unknown, attendance rate and completeness for one student."""
+    rates = analytics.summarize_frame(student_records)
+
+    metric_columns = st.columns(5)
+    metric_columns[0].metric("Present", rates["present"])
+    metric_columns[1].metric("Absent", rates["absent"])
+    metric_columns[2].metric("Unknown", rates["unknown"])
+    metric_columns[3].metric("Attendance rate", analytics.format_rate(rates["attendance_rate"]))
+    metric_columns[4].metric("Completeness", analytics.format_rate(rates["completeness"]))
+
+
+def show_single_student_report(connection, filtered_records):
+    """Show one student's numbers, courses and session history, using the filters (FR-19)."""
+    st.subheader("Single student report")
+
+    student_choices = get_student_choices(connection)
+    student_label = st.selectbox("Student", list(student_choices), key="report_student")
+    student_id = student_choices[student_label]
+
+    student_records = analytics.filter_student(filtered_records, student_id)
+    if student_records.empty:
+        st.info(
+            f"No sessions for {student_label} match these filters. "
+            "Choose another course or a wider date range."
+        )
+        return
+
+    show_student_metrics(student_records)
+
+    course_summary = analytics.build_course_summary(student_records)
+    if len(course_summary) > 1:
+        st.markdown("**By course**")
+        course_table = analytics.format_summary_table(course_summary)
+        st.dataframe(course_table, hide_index=True, width="stretch")
+
+    st.markdown("**Session history**")
+    history = analytics.build_student_history(student_records)
+    show_table_with_download(history, f"student_{student_id}_history.csv", "download_history")
 
 
 # ---------- Tabs ----------
@@ -764,7 +810,7 @@ def main():
         show_dashboard_tab(filtered_records, filter_text)
 
     with reports_tab:
-        show_reports_tab(filtered_records, filter_text)
+        show_reports_tab(connection, filtered_records, filter_text)
 
     connection.close()
 

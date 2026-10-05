@@ -215,12 +215,12 @@ def build_attendance_report(frame):
     })
 
 
-def format_summary_table(student_summary):
-    """Return a copy of a student summary with rates as text like '87.50%' or 'N/A'.
+def format_summary_table(summary):
+    """Return a copy of a student or course summary with rates as text like '87.50%' or 'N/A'.
 
     The screen and the CSV download both use this table, so they match exactly (FR-17).
     """
-    table = student_summary.copy()
+    table = summary.copy()
     rate_texts = []
     completeness_texts = []
 
@@ -233,6 +233,43 @@ def format_summary_table(student_summary):
     return table.rename(columns={
         "student_id": "Student ID",
         "full_name": "Full name",
+        "course_code": "Course",
         "attendance_rate": "Attendance rate",
         "completeness": "Completeness",
+    })
+
+
+# ---------- Single student report (FR-19) ----------
+
+def filter_student(frame, student_id):
+    """Return only the rows of one student."""
+    return frame[frame["student_id"] == student_id].reset_index(drop=True)
+
+
+def build_course_summary(frame):
+    """Return one row per course with Present, Absent, Unknown, rate and completeness."""
+    columns = [
+        "course_code", "Present", "Absent", "Unknown", "attendance_rate", "completeness",
+    ]
+    rows = []
+
+    for course_code, group in frame.groupby("course_code", sort=True):
+        labels = {"course_code": course_code}
+        rows.append(build_summary_row(labels, group))
+
+    return pd.DataFrame(rows, columns=columns)
+
+
+def build_student_history(frame):
+    """Return one student's sessions in date order: session, course, date and status.
+
+    Sessions with no record already have the status 'Unknown' (see build_records_frame).
+    """
+    history = frame.sort_values(["session_date", "session_id"], ignore_index=True)
+    history = history[["session_id", "course_code", "session_date", "status"]]
+    return history.rename(columns={
+        "session_id": "Session",
+        "course_code": "Course",
+        "session_date": "Date",
+        "status": "Status",
     })

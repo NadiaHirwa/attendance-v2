@@ -144,8 +144,8 @@ class TestRecordAttendance(DatabaseTestCase):
         self.assertEqual(value, 1)
 
 
-class TestFilteredCalculations(unittest.TestCase):
-    """Dashboard and report calculations on the seed_demo.py data, in an in-memory database."""
+class SeedDataTestCase(unittest.TestCase):
+    """Base class: the seed_demo.py data in an in-memory database. It has no tests itself."""
 
     def setUp(self):
         """Load the demo data and build the records frame."""
@@ -166,6 +166,10 @@ class TestFilteredCalculations(unittest.TestCase):
         """Return the records for All courses and the full date range."""
         earliest, latest = analytics.get_date_bounds(self.records)
         return analytics.filter_records(self.records, analytics.ALL_COURSES, earliest, latest)
+
+
+class TestFilteredCalculations(SeedDataTestCase):
+    """Dashboard and report calculations on the seed data (FR-12 to FR-16)."""
 
     def test_seed_totals_all_courses_full_range(self):
         """FR-12, FR-13 (BR-10 to BR-12): seed data gives 63, 9, 4, 87.50% and 94.74%."""
@@ -271,6 +275,74 @@ class TestFilteredCalculations(unittest.TestCase):
         row_002 = summary_table[summary_table["Student ID"] == "002"].iloc[0]
         self.assertEqual(row_002["Attendance rate"], "25.00%")
         self.assertEqual(row_002["Completeness"], "100.00%")
+
+
+class TestSingleStudentReport(SeedDataTestCase):
+    """Single student report on the seed data (FR-19)."""
+
+    def test_two_course_student_by_hand(self):
+        """FR-19: student 008 has 7 Present, 0 Absent, 1 Unknown (DS102-W3 missing).
+
+        Attendance rate = 7 / 7 = 100.00%. Completeness = 7 / 8 = 87.50%.
+        """
+        student = analytics.filter_student(self.filter_all(), "008")
+        rates = analytics.summarize_frame(student)
+
+        self.assertEqual(rates["present"], 7)
+        self.assertEqual(rates["absent"], 0)
+        self.assertEqual(rates["unknown"], 1)
+        self.assertEqual(analytics.format_rate(rates["attendance_rate"]), "100.00%")
+        self.assertEqual(analytics.format_rate(rates["completeness"]), "87.50%")
+
+    def test_course_breakdown_by_hand(self):
+        """FR-19: student 008 gets one row per course: PY101 4/0/0 and DS102 3/0/1."""
+        student = analytics.filter_student(self.filter_all(), "008")
+        table = analytics.format_summary_table(analytics.build_course_summary(student))
+
+        self.assertEqual(list(table["Course"]), ["DS102", "PY101"])
+        self.assertEqual(list(table["Present"]), [3, 4])
+        self.assertEqual(list(table["Unknown"]), [1, 0])
+        self.assertEqual(list(table["Completeness"]), ["75.00%", "100.00%"])
+
+    def test_all_three_statuses_by_hand(self):
+        """FR-19: student 012 has 2 Present, 1 Absent, 1 Unknown: 66.67% and 75.00%."""
+        student = analytics.filter_student(self.filter_all(), "012")
+        rates = analytics.summarize_frame(student)
+
+        self.assertEqual((rates["present"], rates["absent"], rates["unknown"]), (2, 1, 1))
+        self.assertEqual(analytics.format_rate(rates["attendance_rate"]), "66.67%")
+        self.assertEqual(analytics.format_rate(rates["completeness"]), "75.00%")
+        self.assertEqual(len(analytics.build_course_summary(student)), 1)
+
+    def test_history_in_date_order_with_unknown(self):
+        """FR-19: the history lists every session in date order; a missing record is Unknown."""
+        student = analytics.filter_student(self.filter_all(), "008")
+        history = analytics.build_student_history(student)
+
+        self.assertEqual(list(history.columns), ["Session", "Course", "Date", "Status"])
+        self.assertEqual(len(history), 8)
+        self.assertEqual(list(history["Date"]), sorted(history["Date"]))
+        self.assertEqual(history["Session"].iloc[0], "PY101-W1")
+        self.assertEqual(history["Session"].iloc[1], "DS102-W1")
+
+        ds102_w3 = history[history["Session"] == "DS102-W3"].iloc[0]
+        self.assertEqual(ds102_w3["Status"], "Unknown")
+
+    def test_student_report_respects_filters(self):
+        """FR-19, FR-12: with only PY101 selected, student 008 has 4 sessions, all Present."""
+        filtered = analytics.filter_records(self.records, "PY101", "2026-09-01", "2026-09-30")
+        student = analytics.filter_student(filtered, "008")
+        rates = analytics.summarize_frame(student)
+
+        self.assertEqual(len(student), 4)
+        self.assertEqual((rates["present"], rates["absent"], rates["unknown"]), (4, 0, 0))
+
+    def test_student_outside_filters_is_empty(self):
+        """FR-19, FR-18: a student with no sessions in the filters gives an empty table."""
+        filtered = analytics.filter_records(self.records, "PY101", "2026-09-01", "2026-09-30")
+        student = analytics.filter_student(filtered, "012")
+
+        self.assertTrue(student.empty)
 
 
 if __name__ == "__main__":

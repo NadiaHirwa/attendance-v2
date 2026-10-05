@@ -20,7 +20,8 @@ Version 2 records attendance for **several courses and sessions**, **saves it pe
 search, CSV import with validation, dashboard, reports, CSV downloads, SQLite storage.
 
 **Out of scope (Future Work):** login/roles, Late/Excused, enrollment start/end dates,
-absence streaks, conflict-resolution screens, import history tab, multi-file upload, deleting records.
+absence streaks, conflict-resolution screens, import history tab, multi-file upload, deleting records,
+student self-service view (requires login and roles).
 
 ## 2. Assumptions
 
@@ -115,6 +116,7 @@ session_id,course_code,session_date,student_id,full_name,status
 | FR-16 | Reports | Show the filtered attendance table (student, course, session, date, status) and a per-student summary (Present, Absent, Unknown, rate, completeness). |
 | FR-17 | Reports | Download both tables as CSV. **Downloads match exactly what is on screen.** |
 | FR-18 | All | Show a clear message instead of an empty table or chart when there is no data. |
+| FR-19 | Reports | Single student report: choose a student ("ID - Name"); using the course and date filters, show their Present, Absent, Unknown, attendance rate and completeness, a per-course breakdown when they are in more than one course, and their session history (session, course, date, status) in date order with missing records shown as Unknown. The history can be downloaded as CSV, matching the screen. |
 
 ## 7. Non-functional requirements
 
