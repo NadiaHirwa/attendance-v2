@@ -260,6 +260,47 @@ def record_attendance(connection, student_id, session_id, status, source=MANUAL_
     return "updated"
 
 
+def import_records(connection, records, source):
+    """Save validated import rows in one transaction and return how many were saved.
+
+    Each record has student_id, full_name, course_code, session_id, session_date and status.
+    The student is enrolled before attendance is saved, so BR-09 holds (IR-06).
+    If any row fails, the whole import is rolled back and nothing is saved.
+    """
+    recorded_at = datetime.now().isoformat(timespec="seconds")
+
+    # "with connection" commits at the end, or rolls back everything if an error happens.
+    with connection:
+        for record in records:
+            # INSERT OR IGNORE keeps an existing student, session or enrollment as it is.
+            connection.execute(
+                "INSERT OR IGNORE INTO students (student_id, full_name) VALUES (?, ?)",
+                (record["student_id"], record["full_name"]),
+            )
+            connection.execute(
+                """
+                INSERT OR IGNORE INTO sessions (session_id, course_code, session_date)
+                VALUES (?, ?, ?)
+                """,
+                (record["session_id"], record["course_code"], record["session_date"]),
+            )
+            connection.execute(
+                "INSERT OR IGNORE INTO enrollments (student_id, course_code) VALUES (?, ?)",
+                (record["student_id"], record["course_code"]),
+            )
+            # A plain INSERT: if the record already exists, the error cancels the import.
+            connection.execute(
+                """
+                INSERT INTO attendance (student_id, session_id, status, source, recorded_at)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (record["student_id"], record["session_id"], record["status"],
+                 source, recorded_at),
+            )
+
+    return len(records)
+
+
 def get_session_attendance(connection, session_id):
     """Return every enrolled student of the session's course with their status.
 

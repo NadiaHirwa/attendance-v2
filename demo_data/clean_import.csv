@@ -1,0 +1,13 @@
+session_id,course_code,session_date,student_id,full_name,status
+PY101-W5,PY101,2026-10-05,001,Nadia Hirwa,Present
+PY101-W5,PY101,2026-10-05,002,Jean-Paul Mugisha,Absent
+PY101-W5,PY101,2026-10-05,003,Grace O'Neil,Present
+PY101-W5,PY101,2026-10-05,004,Eric Niyonzima,Present
+PY101-W5,PY101,2026-10-05,005,Aline Uwase,Present
+PY101-W5,PY101,2026-10-05,006,Patrick Habimana,Present
+PY101-W5,PY101,2026-10-05,007,Diane Mukamana,Absent
+PY101-W5,PY101,2026-10-05,008,Kevin Ndayishimiye,Present
+PY101-W5,PY101,2026-10-05,009,Sandrine Ingabire,Present
+PY101-W5,PY101,2026-10-05,010,Olivier Nkurunziza,Present
+PY101-W5,PY101,2026-10-05,013,Alice Uwimana,Present
+PY101-W2,PY101,2026-09-14,003,Grace O'Neil,Present

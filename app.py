@@ -4,11 +4,14 @@ This file only shows the screens. Rules live in validation.py,
 SQL lives in database.py, and calculations live in analytics.py.
 """
 
+import sqlite3
+
 import pandas as pd
 import streamlit as st
 
 import analytics
 import database
+import importer
 import validation
 
 STATUS_OPTIONS = ["Present", "Absent"]
@@ -372,6 +375,173 @@ def show_search_students(connection):
     st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
 
 
+# ---------- FR-10 and FR-11: import and validate a CSV file ----------
+
+def forget_validation():
+    """Remove a stored validation result, so Confirm cannot use an old file."""
+    if "import_validation" in st.session_state:
+        del st.session_state["import_validation"]
+
+
+def show_template_download():
+    """Offer the empty CSV template (FR-11)."""
+    st.download_button(
+        "Download empty CSV template",
+        data=importer.make_template_csv(),
+        file_name="attendance_template.csv",
+        mime="text/csv",
+    )
+
+
+def show_last_import_result():
+    """Show the result of the last confirmed import, with rejected rows to download (IR-11)."""
+    result = st.session_state.get("import_result")
+    if result is None:
+        return
+
+    st.success(
+        f"Import of {result['filename']} finished. Accepted and saved: {result['accepted']}. "
+        f"Skipped duplicates: {result['duplicates']}. Rejected: {result['rejected']}."
+    )
+
+    rejected_table = result["rejected_table"]
+    if not rejected_table.empty:
+        st.download_button(
+            "Download rejected rows (CSV)",
+            data=rejected_table.to_csv(index=False),
+            file_name="rejected_rows.csv",
+            mime="text/csv",
+            key="download_rejected_after_import",
+        )
+
+
+def validate_upload(connection, uploaded_file, rows):
+    """Validate the rows and keep the result in session_state (the database is not changed)."""
+    accepted, duplicates, rejected = importer.validate_rows(connection, rows)
+
+    st.session_state["import_validation"] = {
+        "file_id": uploaded_file.file_id,
+        "filename": uploaded_file.name,
+        "accepted": accepted,
+        "accepted_table": importer.make_table(accepted, with_reason=False),
+        "duplicates_table": importer.make_table(duplicates, with_reason=True),
+        "rejected_table": importer.make_table(rejected, with_reason=True),
+    }
+
+    # A new validation replaces the result of an earlier import.
+    if "import_result" in st.session_state:
+        del st.session_state["import_result"]
+
+
+def show_review(validation_result):
+    """Show the counts and the accepted, duplicate and rejected rows (Review issues step)."""
+    accepted_table = validation_result["accepted_table"]
+    duplicates_table = validation_result["duplicates_table"]
+    rejected_table = validation_result["rejected_table"]
+
+    count_columns = st.columns(3)
+    count_columns[0].metric("Accepted", len(accepted_table))
+    count_columns[1].metric("Skipped duplicates", len(duplicates_table))
+    count_columns[2].metric("Rejected", len(rejected_table))
+
+    st.markdown("**Accepted rows** (saved only after Confirm)")
+    if accepted_table.empty:
+        st.info("No rows can be imported from this file.")
+    else:
+        st.dataframe(accepted_table, hide_index=True, width="stretch")
+
+    if not duplicates_table.empty:
+        st.markdown("**Skipped duplicates** (already saved or repeated in this file)")
+        st.dataframe(duplicates_table, hide_index=True, width="stretch")
+
+    if not rejected_table.empty:
+        st.markdown("**Rejected rows**")
+        st.dataframe(rejected_table, hide_index=True, width="stretch")
+        st.download_button(
+            "Download rejected rows (CSV)",
+            data=rejected_table.to_csv(index=False),
+            file_name="rejected_rows.csv",
+            mime="text/csv",
+            key="download_rejected_review",
+        )
+
+
+def confirm_import(connection, validation_result):
+    """Save the accepted rows, then store the result and clear the validation (Result step)."""
+    try:
+        saved = importer.apply_import(
+            connection, validation_result["accepted"], validation_result["filename"]
+        )
+    except sqlite3.Error:
+        # The import runs in one transaction, so a failure leaves the database unchanged.
+        st.error(
+            "The import failed and nothing was saved. The data may have changed since "
+            "validation. Click Validate again, then Confirm."
+        )
+        return
+
+    st.session_state["import_result"] = {
+        "filename": validation_result["filename"],
+        "accepted": saved,
+        "duplicates": len(validation_result["duplicates_table"]),
+        "rejected": len(validation_result["rejected_table"]),
+        "rejected_table": validation_result["rejected_table"],
+    }
+    # Clearing the validation removes the Confirm button, so it cannot be clicked twice.
+    forget_validation()
+    st.rerun()
+
+
+def show_import_tab(connection):
+    """Show the import workflow: Upload, Preview, Validate, Review, Confirm, Result (IR-09)."""
+    st.subheader("Import attendance from a CSV file")
+    st.caption("Required columns: " + ", ".join(importer.REQUIRED_COLUMNS))
+    show_template_download()
+
+    show_last_import_result()
+
+    # Step 1: Upload
+    uploaded_file = st.file_uploader("Upload a CSV file", type=["csv"])
+    if uploaded_file is None:
+        forget_validation()
+        return
+
+    # A different file makes the stored validation out of date.
+    validation_result = st.session_state.get("import_validation")
+    if validation_result is not None and validation_result["file_id"] != uploaded_file.file_id:
+        forget_validation()
+
+    rows, error = importer.read_csv(uploaded_file.getvalue())
+    if error is not None:
+        st.error(error)
+        forget_validation()
+        return
+
+    if not rows:
+        st.info("The file has the right columns but no data rows.")
+        return
+
+    # Step 2: Preview
+    st.markdown(f"**Preview of {uploaded_file.name}** ({len(rows)} data rows)")
+    st.dataframe(importer.make_table(rows, with_reason=False), hide_index=True, width="stretch")
+
+    # Step 3: Validate
+    if st.button("Validate"):
+        validate_upload(connection, uploaded_file, rows)
+
+    validation_result = st.session_state.get("import_validation")
+    if validation_result is None:
+        return
+
+    # Step 4: Review issues
+    show_review(validation_result)
+
+    # Step 5: Confirm
+    if validation_result["accepted"]:
+        if st.button("Confirm import", type="primary"):
+            confirm_import(connection, validation_result)
+
+
 # ---------- Tabs ----------
 
 def show_coming_soon(tab_name):
@@ -413,7 +583,7 @@ def main():
         show_manage_tab(connection)
 
     with import_tab:
-        show_coming_soon("Import & Validate")
+        show_import_tab(connection)
 
     with reports_tab:
         show_coming_soon("Reports")

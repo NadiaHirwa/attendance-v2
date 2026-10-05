@@ -43,6 +43,40 @@ DUPLICATE_NAME_WARNING = (
     "tick the confirmation box and submit again."
 )
 
+# Messages for CSV import (Section 5). Row reasons start with "Row N: " in importer.py.
+FILE_NOT_UTF8_ERROR = (
+    "The file could not be read as UTF-8 text. Save it as \"CSV UTF-8\" and upload it again."
+)
+FILE_NOT_CSV_ERROR = "The file could not be read as CSV. Expected comma-separated rows with a header."
+MISSING_COLUMNS_ERROR = "The file is missing required column(s): {}. Expected columns: {}."
+UNKNOWN_COURSE_ERROR = 'Unknown course "{}". Create it first in Manage Attendance.'
+NAME_CONFLICT_SAVED_ERROR = (
+    'Student ID {} is already saved as "{}", not "{}". '
+    "Use the saved name or a different student ID."
+)
+NAME_CONFLICT_FILE_ERROR = (
+    'Student ID {} appears earlier in this file (row {}) as "{}", not "{}". '
+    "Use one name per student ID."
+)
+SESSION_CONFLICT_SAVED_ERROR = (
+    "Session {} is already saved for {} on {}, not {} on {}. "
+    "Use the saved course and date or a different session ID."
+)
+SESSION_CONFLICT_FILE_ERROR = (
+    "Session {} appears earlier in this file (row {}) for {} on {}, not {} on {}. "
+    "Use one course and date per session ID."
+)
+STATUS_CONFLICT_SAVED_ERROR = (
+    "Student {} is already saved as {} for session {}, not {}. "
+    "The saved record is kept; correct it in Manage Attendance."
+)
+STATUS_CONFLICT_FILE_ERROR = (
+    "Student {} is already {} for session {} earlier in this file (row {}), not {}. "
+    "The first row is kept."
+)
+DUPLICATE_SAVED_REASON = "Already saved with the same status."
+DUPLICATE_FILE_REASON = "Repeats row {}."
+
 
 def is_valid_student_id(student_id):
     """Return True if student_id is exactly 3 ASCII digits from 001 to 999 (BR-01)."""
