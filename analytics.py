@@ -18,6 +18,10 @@ CHART_COURSE_COLUMN = "Course"
 CHART_STATUS_COLUMN = "Status"
 CHART_COUNT_COLUMN = "Students"
 CHART_ORDER_COLUMN = "Stack order"
+DEFAULT_STREAK_ALERT = 2
+CURRENT_STREAK_COLUMN = "Current absence streak"
+LONGEST_STREAK_COLUMN = "Longest absence streak"
+LAST_ABSENCE_COLUMN = "Last absence"
 # Order of the parts of each stacked bar, from the bottom up.
 STATUS_ORDER = [PRESENT, ABSENT, UNKNOWN]
 
@@ -328,17 +332,105 @@ def filter_student(frame, student_id):
 
 
 def build_course_summary(frame):
-    """Return one row per course with Present, Absent, Unknown, rate and completeness."""
+    """Return one row per course with Present, Absent, Unknown, rate, completeness and
+    the longest and current absence streaks (FR-19, FR-21)."""
     columns = [
         "course_code", "Present", "Absent", "Unknown", "attendance_rate", "completeness",
+        LONGEST_STREAK_COLUMN, CURRENT_STREAK_COLUMN,
     ]
     rows = []
 
     for course_code, group in frame.groupby("course_code", sort=True):
         labels = {"course_code": course_code}
-        rows.append(build_summary_row(labels, group))
+        row = build_summary_row(labels, group)
+        longest, current = calculate_streaks(statuses_in_session_order(group))
+        row[LONGEST_STREAK_COLUMN] = longest
+        row[CURRENT_STREAK_COLUMN] = current
+        rows.append(row)
 
     return pd.DataFrame(rows, columns=columns)
+
+
+# ---------- Absence streaks and alerts (BR-14, FR-21) ----------
+
+def calculate_streaks(statuses):
+    """Return (longest streak, current streak) for statuses listed in session order (BR-14).
+
+    Consecutive 'Absent' statuses form a streak. 'Present' ends it, and so does
+    'Unknown': a missing record is not an absence and does not join two absences.
+    The current streak is the run of 'Absent' at the end of the list.
+    """
+    longest = 0
+    run = 0
+
+    for status in statuses:
+        if status == ABSENT:
+            run = run + 1
+            if run > longest:
+                longest = run
+        else:
+            run = 0
+
+    # After the loop, run is the streak counted back from the most recent session.
+    return longest, run
+
+
+def statuses_in_session_order(group):
+    """Return a group's statuses sorted by session date, then session ID."""
+    ordered = group.sort_values(["session_date", "session_id"])
+    return list(ordered["status"])
+
+
+def find_last_absence_date(group):
+    """Return the latest session date with status 'Absent', or None if there is none."""
+    absent_rows = group[group["status"] == ABSENT]
+    if absent_rows.empty:
+        return None
+    return absent_rows["session_date"].max()
+
+
+def build_streak_table(frame):
+    """Return one row per student per course with current and longest streaks (FR-21).
+
+    Only the sessions in frame are used, so the filters are respected.
+    """
+    columns = [
+        "student_id", "full_name", "course_code",
+        CURRENT_STREAK_COLUMN, LONGEST_STREAK_COLUMN, LAST_ABSENCE_COLUMN,
+    ]
+    rows = []
+
+    for (student_id, course_code), group in frame.groupby(["student_id", "course_code"]):
+        longest, current = calculate_streaks(statuses_in_session_order(group))
+        rows.append({
+            "student_id": student_id,
+            "full_name": group["full_name"].iloc[0],
+            "course_code": course_code,
+            CURRENT_STREAK_COLUMN: current,
+            LONGEST_STREAK_COLUMN: longest,
+            LAST_ABSENCE_COLUMN: find_last_absence_date(group),
+        })
+
+    return pd.DataFrame(rows, columns=columns)
+
+
+def find_streak_alerts(streak_table, minimum):
+    """Return the rows whose current streak is at least minimum, highest streak first.
+
+    Ties are ordered by student ID, then course, so the list is always in the same order.
+    The columns get readable names for the screen.
+    """
+    alerts = streak_table[streak_table[CURRENT_STREAK_COLUMN] >= minimum]
+    alerts = alerts.sort_values(
+        [CURRENT_STREAK_COLUMN, "student_id", "course_code"],
+        ascending=[False, True, True],
+        ignore_index=True,
+    )
+    return alerts.rename(columns={
+        "student_id": "Student ID",
+        "full_name": "Full name",
+        "course_code": "Course",
+    })
 
 
 def build_student_history(frame):

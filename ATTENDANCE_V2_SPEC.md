@@ -20,7 +20,7 @@ Version 2 records attendance for **several courses and sessions**, **saves it pe
 search, CSV import with validation, dashboard, reports, CSV downloads, SQLite storage.
 
 **Out of scope (Future Work):** login/roles, Late/Excused, enrollment start/end dates,
-absence streaks, conflict-resolution screens, import history tab, multi-file upload, deleting records,
+conflict-resolution screens, import history tab, multi-file upload, deleting records,
 student self-service view (requires login and roles).
 
 ## 2. Assumptions
@@ -69,6 +69,7 @@ attendance  (student_id  TEXT NOT NULL REFERENCES students,
 | BR-11 | **Recording completeness** = (Present + Absent) / Expected x 100, where Expected = sessions x enrolled students. `N/A` when Expected = 0. |
 | BR-12 | **Unknown** = Expected - Present - Absent. Unknown is never counted as Absent. |
 | BR-13 | Every error message states what was wrong and what is expected. |
+| BR-14 | **Absence streak:** counted per student per course, over that course's sessions in date order (then session ID), using only sessions inside the current filters. Consecutive Absent records form a streak; Present ends it, and Unknown also ends it (Unknown is not an absence and does not join two absences). **Longest streak** = the longest run anywhere. **Current streak** = the run of Absent counted back from the student's most recent session in that course (0 if that session is not Absent). |
 
 **Worked example (use in a test and on a slide):** 7 Present, 2 Absent, 1 Unknown, so Attendance = 77.78% and Completeness = 90.00%.
 
@@ -118,6 +119,7 @@ session_id,course_code,session_date,student_id,full_name,status
 | FR-18 | All | Show a clear message instead of an empty table or chart when there is no data. |
 | FR-19 | Reports | Single student report: choosing a student ("ID - Name") in the FR-16 selector replaces the All students view; using the course and date filters, show their Present, Absent, Unknown, attendance rate and completeness, a per-course breakdown when they are in more than one course, and their session history (session, course, date, status) in date order with missing records shown as Unknown. The history can be downloaded as CSV, matching the screen. |
 | FR-20 | Dashboard | Show a second chart below the FR-14 chart, "Recording status by session": one stacked bar per session with its Present (blue), Absent (orange) and Unknown (grey) counts, using the same filters, labels and session order as FR-14. Sessions with no records are included as all Unknown. Each bar's total equals the students enrolled in that session's course. |
+| FR-21 | Dashboard, Reports | **Absence alerts** (Dashboard, below the threshold list): a number input "Alert when current streak is at least" (default 2, minimum 1) lists every student and course whose current streak (BR-14) reaches it, with student ID, name, course, current streak, longest streak and date of last absence, highest current streak first. If nobody matches, a success message says so. In the Reports single-student view, the "By course" table (shown even for one course) adds the longest and current absence streak per course. |
 
 ## 7. Non-functional requirements
 

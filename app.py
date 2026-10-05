@@ -747,6 +747,24 @@ def show_threshold_list(filtered_records):
         st.dataframe(analytics.format_summary_table(no_rate), hide_index=True, width="stretch")
 
 
+def show_absence_alerts(filtered_records):
+    """List students whose current absence streak reaches a chosen length (FR-21)."""
+    st.subheader("Absence alerts")
+
+    minimum = st.number_input(
+        "Alert when current streak is at least", min_value=1,
+        value=analytics.DEFAULT_STREAK_ALERT, step=1, key="streak_minimum",
+    )
+
+    streak_table = analytics.build_streak_table(filtered_records)
+    alerts = analytics.find_streak_alerts(streak_table, minimum)
+
+    if alerts.empty:
+        st.success(f"No students have {minimum} or more absences in a row.")
+    else:
+        st.dataframe(alerts, hide_index=True, width="stretch")
+
+
 def show_dashboard_tab(filtered_records, filter_text):
     """Show the Dashboard tab."""
     if not has_data_to_show(filtered_records, filter_text):
@@ -759,6 +777,8 @@ def show_dashboard_tab(filtered_records, filter_text):
     show_status_chart(filtered_records)
     st.divider()
     show_threshold_list(filtered_records)
+    st.divider()
+    show_absence_alerts(filtered_records)
 
 
 # ---------- FR-16 and FR-17: Reports ----------
@@ -834,11 +854,11 @@ def show_single_student_report(student_id, student_label, filtered_records):
 
     show_summary_metrics(student_records)
 
+    # Shown even for one course, because it holds the absence streaks (FR-21).
+    st.markdown("**By course**")
     course_summary = analytics.build_course_summary(student_records)
-    if len(course_summary) > 1:
-        st.markdown("**By course**")
-        course_table = analytics.format_summary_table(course_summary)
-        st.dataframe(course_table, hide_index=True, width="stretch")
+    course_table = analytics.format_summary_table(course_summary)
+    st.dataframe(course_table, hide_index=True, width="stretch")
 
     st.markdown("**Session history**")
     history = analytics.build_student_history(student_records)

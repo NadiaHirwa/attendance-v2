@@ -390,6 +390,114 @@ class TestFilteredCalculations(SeedDataTestCase):
         self.assertEqual(row_002["Completeness"], "100.00%")
 
 
+class TestStreakRule(unittest.TestCase):
+    """BR-14: the streak rule on short lists of statuses in session order."""
+
+    def test_absent_absent_present_absent(self):
+        """BR-14: Absent, Absent, Present, Absent gives longest 2 and current 1."""
+        statuses = ["Absent", "Absent", "Present", "Absent"]
+        self.assertEqual(analytics.calculate_streaks(statuses), (2, 1))
+
+    def test_unknown_breaks_the_streak(self):
+        """BR-14: Absent, Unknown, Absent gives longest 1; Unknown does not join absences."""
+        statuses = ["Absent", "Unknown", "Absent"]
+        self.assertEqual(analytics.calculate_streaks(statuses), (1, 1))
+
+    def test_no_records(self):
+        """BR-14: no sessions gives longest 0 and current 0."""
+        self.assertEqual(analytics.calculate_streaks([]), (0, 0))
+
+    def test_ends_with_present(self):
+        """BR-14: a Present at the end makes the current streak 0."""
+        statuses = ["Absent", "Absent", "Absent", "Present"]
+        self.assertEqual(analytics.calculate_streaks(statuses), (3, 0))
+
+    def test_ends_with_unknown(self):
+        """BR-14: an Unknown most recent session also makes the current streak 0."""
+        statuses = ["Absent", "Absent", "Unknown"]
+        self.assertEqual(analytics.calculate_streaks(statuses), (2, 0))
+
+
+class TestStreaksOnSeedData(SeedDataTestCase):
+    """FR-21 on the seed_demo.py data."""
+
+    def find_row(self, streak_table, student_id, course_code):
+        """Return the streak row of one student in one course."""
+        match = streak_table[
+            (streak_table["student_id"] == student_id)
+            & (streak_table["course_code"] == course_code)
+        ]
+        return match.iloc[0]
+
+    def test_seed_streaks_by_hand(self):
+        """FR-21, checked by hand from seed_demo.py:
+
+        002 in PY101: W1 Absent, W2 Present, W3 Absent, W4 Absent -> longest 2, current 2,
+            last absence 2026-09-28.
+        011 in DS102: W1 Present, W2 Absent, W3 Absent, W4 Present -> longest 2, current 0.
+        012 in DS102: W1 Present, W2 Present, W3 Unknown, W4 Absent -> longest 1, current 1.
+        """
+        streak_table = analytics.build_streak_table(self.filter_all())
+
+        row_002 = self.find_row(streak_table, "002", "PY101")
+        self.assertEqual(row_002[analytics.LONGEST_STREAK_COLUMN], 2)
+        self.assertEqual(row_002[analytics.CURRENT_STREAK_COLUMN], 2)
+        self.assertEqual(row_002[analytics.LAST_ABSENCE_COLUMN], "2026-09-28")
+
+        row_011 = self.find_row(streak_table, "011", "DS102")
+        self.assertEqual(row_011[analytics.LONGEST_STREAK_COLUMN], 2)
+        self.assertEqual(row_011[analytics.CURRENT_STREAK_COLUMN], 0)
+
+        row_012 = self.find_row(streak_table, "012", "DS102")
+        self.assertEqual(row_012[analytics.LONGEST_STREAK_COLUMN], 1)
+        self.assertEqual(row_012[analytics.CURRENT_STREAK_COLUMN], 1)
+
+    def test_seed_alerts_default(self):
+        """FR-21: at the default of 2, only 002 (PY101) is listed. 011's streak of 2 is over."""
+        streak_table = analytics.build_streak_table(self.filter_all())
+        alerts = analytics.find_streak_alerts(streak_table, analytics.DEFAULT_STREAK_ALERT)
+
+        self.assertEqual(list(alerts["Student ID"]), ["002"])
+        self.assertEqual(list(alerts["Course"]), ["PY101"])
+
+    def test_seed_alerts_sorted_highest_first(self):
+        """FR-21: at 1, the list is 002 (2), then 009 (1, PY101) and 012 (1, DS102)."""
+        streak_table = analytics.build_streak_table(self.filter_all())
+        alerts = analytics.find_streak_alerts(streak_table, 1)
+
+        self.assertEqual(list(alerts["Student ID"]), ["002", "009", "012"])
+        self.assertEqual(list(alerts[analytics.CURRENT_STREAK_COLUMN]), [2, 1, 1])
+
+    def test_streaks_respect_filters(self):
+        """FR-21, BR-14: up to 2026-09-21, 002 in PY101 has A, P, A -> longest 1, current 1."""
+        filtered = analytics.filter_records(
+            self.records, analytics.ALL_COURSES, "2026-09-01", "2026-09-21"
+        )
+        streak_table = analytics.build_streak_table(filtered)
+
+        row_002 = self.find_row(streak_table, "002", "PY101")
+        self.assertEqual(row_002[analytics.LONGEST_STREAK_COLUMN], 1)
+        self.assertEqual(row_002[analytics.CURRENT_STREAK_COLUMN], 1)
+
+    def test_course_summary_has_streaks(self):
+        """FR-19, FR-21: the By course table of 002 shows longest 2 and current 2."""
+        student = analytics.filter_student(self.filter_all(), "002")
+        course_summary = analytics.build_course_summary(student)
+
+        self.assertEqual(len(course_summary), 1)
+        self.assertEqual(course_summary[analytics.LONGEST_STREAK_COLUMN].iloc[0], 2)
+        self.assertEqual(course_summary[analytics.CURRENT_STREAK_COLUMN].iloc[0], 2)
+
+    def test_empty_records_give_no_alerts(self):
+        """FR-21, FR-18: no sessions in the filters gives an empty alert list, not an error."""
+        filtered = analytics.filter_records(
+            self.records, analytics.ALL_COURSES, "2027-01-01", "2027-01-31"
+        )
+        alerts = analytics.find_streak_alerts(analytics.build_streak_table(filtered), 2)
+
+        self.assertTrue(alerts.empty)
+
+
 class TestSingleStudentReport(SeedDataTestCase):
     """Single student report on the seed data (FR-19)."""
 

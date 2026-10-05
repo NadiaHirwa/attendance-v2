@@ -30,6 +30,7 @@ and `tests/test_importer.py`.
 | BR-11 Completeness | `analytics.calculate_rates` | T06, T07 (same tests) |
 | BR-12 Unknown | `analytics.build_records_frame`, `analytics.count_statuses` | `test_t06_worked_example_from_database`, `test_unknown_is_not_stored` |
 | BR-13 Error messages | Message constants in `validation.py` | `test_format_errors_name_the_value`, `test_t09_unknown_course`; manual demo step: `-Nadia` |
+| BR-14 Absence streaks | `analytics.calculate_streaks`, `analytics.statuses_in_session_order` | `test_absent_absent_present_absent`, `test_unknown_breaks_the_streak`, `test_no_records`, `test_ends_with_present`, `test_ends_with_unknown`, `test_streaks_respect_filters` |
 
 ## CSV import rules (Section 5)
 
@@ -71,6 +72,7 @@ and `tests/test_importer.py`.
 | FR-18 Message instead of empty data | `app.has_data_to_show`, `app.show_rate_chart`, info messages in each Manage section | `test_filter_with_no_sessions`, `test_t07_empty_frame`; manual demo step |
 | FR-19 Single student report | `app.show_reports_tab`, `app.show_single_student_report`, `app.show_summary_metrics`, `analytics.filter_student`, `analytics.summarize_frame`, `analytics.build_course_summary`, `analytics.build_student_history`, `analytics.format_summary_table`, `app.show_table_with_download` | `test_two_course_student_by_hand`, `test_course_breakdown_by_hand`, `test_all_three_statuses_by_hand`, `test_history_in_date_order_with_unknown`, `test_student_report_respects_filters`, `test_student_outside_filters_is_empty` |
 | FR-20 Recording status chart | `app.show_status_chart`, `analytics.build_status_chart_data`, `analytics.make_status_chart_long`, `analytics.keep_statuses`, `analytics.labels_need_year`, `analytics.make_session_label` | `test_status_chart_counts_add_up_to_enrolled`, `test_status_chart_by_hand`, `test_status_chart_same_labels_and_order_as_rate_chart`, `test_status_chart_keeps_unrecorded_session`, `test_status_chart_long_shape`, `test_status_chart_keep_statuses` |
+| FR-21 Absence alerts and streaks per course | `app.show_absence_alerts`, `app.show_single_student_report`, `analytics.build_streak_table`, `analytics.find_streak_alerts`, `analytics.find_last_absence_date`, `analytics.build_course_summary`, `analytics.calculate_streaks` | `test_seed_streaks_by_hand`, `test_seed_alerts_default`, `test_seed_alerts_sorted_highest_first`, `test_streaks_respect_filters`, `test_course_summary_has_streaks`, `test_empty_records_give_no_alerts` |
 
 ## Non-functional requirements (Section 7)
 
