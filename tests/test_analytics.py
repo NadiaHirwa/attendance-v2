@@ -275,6 +275,59 @@ class TestFilteredCalculations(SeedDataTestCase):
         self.assertEqual(len(chart_data), 4)
         self.assertEqual(set(chart_data[analytics.CHART_COURSE_COLUMN]), {"PY101"})
 
+    def test_status_chart_counts_add_up_to_enrolled(self):
+        """FR-20: per session, Present + Absent + Unknown = students enrolled in its course."""
+        status_data = analytics.build_status_chart_data(self.filter_all())
+        self.assertEqual(len(status_data), 8)
+
+        for index, row in status_data.iterrows():
+            course_code = row[analytics.CHART_COURSE_COLUMN]
+            enrolled = len(database.get_enrolled_students(self.connection, course_code))
+            total = row["Present"] + row["Absent"] + row["Unknown"]
+            self.assertEqual(total, enrolled, row[analytics.CHART_LABEL_COLUMN])
+
+    def test_status_chart_by_hand(self):
+        """FR-20: PY101-W2 has 8 Present, 1 Absent (006) and 1 Unknown (003)."""
+        status_data = analytics.build_status_chart_data(self.filter_all())
+        session = status_data[status_data[analytics.CHART_LABEL_COLUMN] == "09-14 PY101-W2"]
+
+        self.assertEqual(session["Present"].iloc[0], 8)
+        self.assertEqual(session["Absent"].iloc[0], 1)
+        self.assertEqual(session["Unknown"].iloc[0], 1)
+
+    def test_status_chart_same_labels_and_order_as_rate_chart(self):
+        """FR-20, FR-14: the status chart uses the same labels in the same order."""
+        rate_data = analytics.build_rate_chart_data(self.filter_all())
+        status_data = analytics.build_status_chart_data(self.filter_all())
+
+        self.assertEqual(
+            list(status_data[analytics.CHART_LABEL_COLUMN]),
+            list(rate_data[analytics.CHART_LABEL_COLUMN]),
+        )
+
+    def test_status_chart_keeps_unrecorded_session(self):
+        """FR-20: a session with no records is shown as all Unknown (the rate chart omits it)."""
+        database.add_session(self.connection, "PY101-W5", "PY101", "2026-10-05")
+        self.records = self.load_records()
+
+        status_data = analytics.build_status_chart_data(self.filter_all())
+        last = status_data.iloc[-1]
+
+        self.assertEqual(last[analytics.CHART_LABEL_COLUMN], "10-05 PY101-W5")
+        self.assertEqual((last["Present"], last["Absent"], last["Unknown"]), (0, 0, 10))
+
+    def test_status_chart_long_shape(self):
+        """FR-20: the long table has one row per session and status, Present first."""
+        status_data = analytics.build_status_chart_data(self.filter_all())
+        long_data = analytics.make_status_chart_long(status_data)
+
+        self.assertEqual(len(long_data), 8 * 3)
+        first_session = long_data.iloc[0:3]
+        self.assertEqual(
+            list(first_session[analytics.CHART_STATUS_COLUMN]), ["Present", "Absent", "Unknown"]
+        )
+        self.assertEqual(list(first_session[analytics.CHART_COUNT_COLUMN]), [9, 1, 0])
+
     def test_students_below_threshold_sorted(self):
         """FR-15: below 75% are 002 (25%), 011 (50%) and 012 (66.67%), lowest first."""
         summary = analytics.build_student_summary(self.filter_all())

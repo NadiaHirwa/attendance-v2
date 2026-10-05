@@ -17,6 +17,9 @@ import importer
 import validation
 
 STATUS_OPTIONS = ["Present", "Absent"]
+# Present blue, Absent orange, Unknown grey: colour-blind friendly (Okabe-Ito palette),
+# and grey suggests "missing". Same order as analytics.STATUS_ORDER.
+STATUS_COLORS = ["#0072B2", "#E69F00", "#999999"]
 # Width in pixels, so the longest import reasons fit without being cut off.
 REASON_COLUMN_WIDTH = 1500
 NO_COURSES_MESSAGE = "No courses yet. Create a course first."
@@ -671,6 +674,31 @@ def show_rate_chart(filtered_records):
     )
 
 
+def show_status_chart(filtered_records):
+    """Show a stacked bar per session: Present, Absent and Unknown counts (FR-20)."""
+    st.subheader("Recording status by session")
+
+    status_data = analytics.build_status_chart_data(filtered_records)
+    if status_data.empty:
+        st.info("No sessions to show for these filters.")
+        return
+
+    chart_data = analytics.make_status_chart_long(status_data)
+    chart = alt.Chart(chart_data).mark_bar().encode(
+        # sort=None keeps the date order from analytics.py, like the rate chart.
+        x=alt.X(analytics.CHART_LABEL_COLUMN, type="nominal", sort=None,
+                axis=alt.Axis(labelAngle=-45)),
+        y=alt.Y(analytics.CHART_COUNT_COLUMN, type="quantitative", stack="zero"),
+        color=alt.Color(
+            analytics.CHART_STATUS_COLUMN, type="nominal",
+            scale=alt.Scale(domain=analytics.STATUS_ORDER, range=STATUS_COLORS),
+        ),
+        order=alt.Order(analytics.CHART_ORDER_COLUMN, type="quantitative"),
+    )
+    st.altair_chart(chart, width="stretch")
+    st.caption("Grey shows enrolled students with no record: missing data, not absence.")
+
+
 def show_threshold_list(filtered_records):
     """List students below a chosen attendance rate, lowest first (FR-15)."""
     st.subheader("Students below a threshold")
@@ -701,6 +729,8 @@ def show_dashboard_tab(filtered_records, filter_text):
     show_metrics(filtered_records)
     st.divider()
     show_rate_chart(filtered_records)
+    st.divider()
+    show_status_chart(filtered_records)
     st.divider()
     show_threshold_list(filtered_records)
 

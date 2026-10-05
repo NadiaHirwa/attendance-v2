@@ -15,6 +15,11 @@ DEFAULT_THRESHOLD = 75
 CHART_VALUE_COLUMN = "Attendance rate (%)"
 CHART_LABEL_COLUMN = "Session"
 CHART_COURSE_COLUMN = "Course"
+CHART_STATUS_COLUMN = "Status"
+CHART_COUNT_COLUMN = "Students"
+CHART_ORDER_COLUMN = "Stack order"
+# Order of the parts of each stacked bar, from the bottom up.
+STATUS_ORDER = [PRESENT, ABSENT, UNKNOWN]
 
 RECORD_COLUMNS = [
     "student_id",
@@ -177,6 +182,14 @@ def make_session_label(session_date, session_id, include_year):
     return f"{session_date[5:]} {session_id}"
 
 
+def labels_need_year(session_summary):
+    """Return True if the sessions are in more than one year, so labels must show the year."""
+    # The first 4 characters of 'YYYY-MM-DD' are the year.
+    first_year = session_summary["session_date"].min()[:4]
+    last_year = session_summary["session_date"].max()[:4]
+    return first_year != last_year
+
+
 def build_rate_chart_data(frame):
     """Return one row per session (label, course, rate) in date order for the chart (FR-14).
 
@@ -189,11 +202,7 @@ def build_rate_chart_data(frame):
     if session_summary.empty:
         return pd.DataFrame(columns=columns)
 
-    # The first 4 characters of 'YYYY-MM-DD' are the year.
-    first_year = session_summary["session_date"].min()[:4]
-    last_year = session_summary["session_date"].max()[:4]
-    include_year = first_year != last_year
-
+    include_year = labels_need_year(session_summary)
     rows = []
     for index, row in session_summary.iterrows():
         if pd.isna(row["attendance_rate"]):
@@ -205,6 +214,51 @@ def build_rate_chart_data(frame):
             CHART_VALUE_COLUMN: row["attendance_rate"],
         })
 
+    return pd.DataFrame(rows, columns=columns)
+
+
+def build_status_chart_data(frame):
+    """Return one row per session (label, course, Present, Absent, Unknown) in date order (FR-20).
+
+    Uses the same labels and order as build_rate_chart_data(). Sessions where
+    nothing was recorded are kept: their whole bar is Unknown.
+    """
+    columns = [CHART_LABEL_COLUMN, CHART_COURSE_COLUMN] + STATUS_ORDER
+    session_summary = build_session_summary(frame)
+    if session_summary.empty:
+        return pd.DataFrame(columns=columns)
+
+    include_year = labels_need_year(session_summary)
+    rows = []
+    for index, row in session_summary.iterrows():
+        label = make_session_label(row["session_date"], row["session_id"], include_year)
+        rows.append({
+            CHART_LABEL_COLUMN: label,
+            CHART_COURSE_COLUMN: row["course_code"],
+            PRESENT: row["Present"],
+            ABSENT: row["Absent"],
+            UNKNOWN: row["Unknown"],
+        })
+
+    return pd.DataFrame(rows, columns=columns)
+
+
+def make_status_chart_long(status_chart_data):
+    """Return one row per session and status, the shape a stacked bar chart needs (FR-20).
+
+    The 'Stack order' column puts Present at the bottom, then Absent, then Unknown on top.
+    """
+    rows = []
+    for index, row in status_chart_data.iterrows():
+        for position, status in enumerate(STATUS_ORDER):
+            rows.append({
+                CHART_LABEL_COLUMN: row[CHART_LABEL_COLUMN],
+                CHART_STATUS_COLUMN: status,
+                CHART_COUNT_COLUMN: row[status],
+                CHART_ORDER_COLUMN: position,
+            })
+
+    columns = [CHART_LABEL_COLUMN, CHART_STATUS_COLUMN, CHART_COUNT_COLUMN, CHART_ORDER_COLUMN]
     return pd.DataFrame(rows, columns=columns)
 
 

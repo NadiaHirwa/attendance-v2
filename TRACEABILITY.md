@@ -70,6 +70,7 @@ and `tests/test_importer.py`.
 | FR-17 Downloads match the screen | `app.show_table_with_download` (one DataFrame for both) | Manual demo step 6 |
 | FR-18 Message instead of empty data | `app.has_data_to_show`, `app.show_rate_chart`, info messages in each Manage section | `test_filter_with_no_sessions`, `test_t07_empty_frame`; manual demo step |
 | FR-19 Single student report | `app.show_single_student_report`, `app.show_student_metrics`, `analytics.filter_student`, `analytics.summarize_frame`, `analytics.build_course_summary`, `analytics.build_student_history`, `analytics.format_summary_table`, `app.show_table_with_download` | `test_two_course_student_by_hand`, `test_course_breakdown_by_hand`, `test_all_three_statuses_by_hand`, `test_history_in_date_order_with_unknown`, `test_student_report_respects_filters`, `test_student_outside_filters_is_empty` |
+| FR-20 Recording status chart | `app.show_status_chart`, `analytics.build_status_chart_data`, `analytics.make_status_chart_long`, `analytics.labels_need_year`, `analytics.make_session_label` | `test_status_chart_counts_add_up_to_enrolled`, `test_status_chart_by_hand`, `test_status_chart_same_labels_and_order_as_rate_chart`, `test_status_chart_keeps_unrecorded_session`, `test_status_chart_long_shape` |
 
 ## Non-functional requirements (Section 7)
 
