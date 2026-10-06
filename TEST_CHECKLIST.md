@@ -3,7 +3,7 @@
 **Before every section:** run `.venv\Scripts\python seed_demo.py`, restart Streamlit, refresh the browser.
 Every row starts from the seed data unless it says otherwise.
 
-✔ = confirmed by running the code (on a copy of the database or by an automated test). Run `.venv\Scripts\python -m unittest`: **234 tests, all OK**.
+✔ = confirmed by running the code (on a copy of the database or by an automated test). Run `.venv\Scripts\python -m unittest`: **271 tests, all OK**.
 
 Dates are shown as **DD/MM/YYYY** everywhere on screen and in downloads (BR-23).
 
@@ -12,7 +12,8 @@ Dates are shown as **DD/MM/YYYY** everywhere on screen and in downloads (BR-23).
 | Situation | Present | Late | Excused | Absent | Unknown | Attendance rate | Completeness |
 |---|---|---|---|---|---|---|---|
 | **Seed data** (505 expected) | 477 | 10 | 4 | 10 | 4 | **97.99%** | **99.21%** |
-| After importing `messy_import.csv` (522 expected) | 480 | 11 | 4 | 11 | 16 | 97.81% | 96.93% |
+| After importing `messy_import.csv`, no suggestions accepted (522 expected) | 479 | 11 | 6 | 11 | 15 | 97.80% | 97.13% |
+| After importing `messy_import.csv`, all 5 suggestions accepted (533 expected) | 483 | 11 | 6 | 11 | 22 | 97.82% | 95.87% |
 | After importing `clean_import.csv` (510 expected) | 482 | 11 | 5 | 10 | 2 | 98.01% | 99.61% |
 | **002 in PY101** (17 expected) | 10 | 2 | 0 | 5 | 0 | **70.59%** | 100.00% |
 
@@ -138,34 +139,42 @@ Columns: `course_code, date, student_id, full_name, status`, optional `type` (Cl
 | 7.3 | A Version 2 file (`session_id, session_date, …`) | ✔ Whole file rejected: "missing required column(s): date". |
 | 7.4 | Semicolon-separated file / empty file / header only | ✔ Rejected / rejected / "The file has the right columns but no data rows." |
 | 7.5 | Row with **fewer** / **more** cells, blank lines in the middle | ✔ That row rejected / extra cells ignored / skipped (row numbers still match the file). |
-| 7.6 | Dates `16/09/2026` and `2026-09-16` | ✔ Both accepted (BR-23). `07/09/2026` means 7 September. `2026-02-30`, `31/02/2026`, `2026-9-5` rejected. |
-| 7.7 | Spaces around values, lowercase codes, `present`, `tutorial` | ✔ Cleaned and accepted. |
+| 7.6 | Dates `16/09/2026`, `7/9/2026` and `2026-09-16` | ✔ All accepted; the first two are listed under **Auto-fixed** as → `2026-09-16` / `2026-09-07` (FR-31). `07/09/2026` means 7 September. `2026-02-30`, `31/02/2026`, `31/9/2026`, `2026-9-5` rejected. |
+| 7.7 | Spaces around values, lowercase codes, `present`, `tutorial`, `tut`, `CLASS`, `Grace O’Neil` | ✔ Accepted; each change listed under **Auto-fixed** as row, column, before → after, why. |
 | 7.8 | Excel "CSV (Comma delimited)" with `Émile` / "CSV UTF-8" | ✔ Rejected ("save as CSV UTF-8") / accepted. |
-| 7.9 | File opened and saved in Excel | ⚠ `001` becomes `1`, dates may change. ✔ Rejected with reasons. **Edit CSVs in Notepad or VS Code.** |
+| 7.9 | File opened and saved in Excel | ⚠ `001` becomes `1`: ✔ auto-fixed to `001` (also `04` → `004`). `0` and `00` are **not** fixed and are rejected. **Still best to edit CSVs in Notepad or VS Code.** |
 | 7.10 | Status `L`, `late`, `E`, `Excused` | ✔ Accepted, saved as Late / Excused. `maybe` is rejected. |
 | 7.11 | Type `Lab` | ✔ Rejected: "Expected Class or Tutorial (or leave it empty for Class)." |
+| 7.12 | Name `eric niyonzima` for a new student | ✔ Kept as typed: names are never changed except spaces and apostrophes. |
 
 ## 8. Import & Validate: combining with saved data
 
 | # | Upload | Expected |
 |---|---|---|
-| 8.1 | `messy_import.csv` → Validate | ✔ **5 accepted, 2 skipped, 12 rejected.** Nothing saved yet; Dashboard unchanged. |
-| 8.2 | Confirm | ✔ Dashboard: **480 / 11 / 4 / 11 / 16, 97.81%, 96.93%**. Confirm button disappears. The new MA103 Saturday tutorial (19/09) is created. |
-| 8.3 | Same file again → Validate | ✔ Accepted rows are now "Already saved with the same status". No Confirm button. |
-| 8.4 | `clean_import.csv` → Confirm | ✔ 7 accepted. Dashboard **482 / 11 / 5 / 10 / 2, 98.01%, 99.61%**. |
-| 8.5 | Class row on a Saturday | ✔ Rejected: "Row 10: PY101 has no class on Saturday 12/09/2026." |
-| 8.6 | Class row on the DS102 holiday | ✔ Rejected: "Row 11: DS102 has no class on Wednesday 16/09/2026." |
-| 8.7 | Tutorial rows on a new date | ✔ One new tutorial (T1) is planned and shared by every row of that date; created only at Confirm. |
-| 8.8 | Row filling an existing Unknown | ✔ Gap filled. |
-| 8.9 | Same status as saved / different status from saved | ✔ Skipped as duplicate / rejected, saved record kept. |
-| 8.10 | Existing ID, different name / same name in different case | ✔ Rejected (name conflict) / accepted, saved spelling kept. |
-| 8.11 | New student | ✔ Created and enrolled **from their earliest date in the file**, so not Unknown for earlier sessions. |
-| 8.12 | Row before a late joiner's start | ✔ Rejected: "Student 010 is enrolled in DS102 from 14/09/2026, not on 07/09/2026." |
-| 8.13 | Row outside the course period | ✔ Rejected: "Row 19: PY101 runs from 07/09/2026 to 25/09/2026, not on 02/10/2026." |
-| 8.14 | Unknown course `BIO200` | ✔ Rejected. Import never creates courses. |
-| 8.15 | Same new student twice in the file with different names | ✔ First row kept, later row rejected. |
-| 8.16 | Saving fails halfway | Nothing saved (one transaction); an error asks you to validate again. |
-| 8.17 | Download rejected rows / template | CSV with a `reason` column / header-only template with the Version 3 columns. |
+| 8.1 | `messy_import.csv` → Validate | ✔ Metrics: **Auto-fixes 31, Accepted suggestions 0 of 5, Accepted 6, Skipped duplicates 2, Rejected 11.** Every suggestion unticked; S4 shows "Keep saved Absent". Nothing saved yet; Dashboard unchanged. |
+| 8.2 | Confirm without accepting anything | ✔ "Auto-fixes: 31. Accepted suggestions: 0. Saved: 6. Skipped duplicates: 2. Rejected: 11." Dashboard **479 / 11 / 6 / 11 / 15, 97.80%, 97.13%**. 002 on 08/09 stays **Absent**. The new MA103 Saturday tutorial (19/09) is created. |
+| 8.3 | Fresh seed: Validate, tick all four boxes, choose "Use file: Present" → **Apply suggestions** | ✔ **Accepted suggestions 5 of 5, Accepted 11, Skipped duplicates 2, Rejected 6.** Still nothing saved. |
+| 8.4 | Confirm | ✔ "Auto-fixes: 31. Accepted suggestions: 5. Saved: 11. Skipped duplicates: 2. Rejected: 6." Dashboard **483 / 11 / 6 / 11 / 22, 97.82%, 95.87%**. 002 on 08/09 is **Present**, source `messy_import.csv`. New students **013 Fabrice Gasana** (PY101 from 21/09) and **015 Alice Kayitesi** (MA103 from 22/09). |
+| 8.5 | Row 12 (S1): `004, eric niyonzimma` | ✔ "Use saved name Eric Niyonzima". Accepted → saved under 004 Eric Niyonzima. |
+| 8.6 | Rows 13 and 14 (S2): `011, Fabrice Gasana` (saved 011 is Claudine Umutoni) | ✔ Both rows: "Assign next free ID 013 as a new student" (the same pair always gets the same ID). |
+| 8.7 | Row 16 (S3): `014` again as Alice Kayitesi (row 15 is Alice Uwimana) | ✔ "Assign next free ID 015 as a new student": 013 is already proposed, 014 is in the file. |
+| 8.8 | Row 17 (S4): 002 PY101 08/09 `P` (saved Absent) | ✔ Default "Keep saved Absent" → rejected, saved record kept. "Use file: Present" → updated in the same transaction as the import. |
+| 8.9 | Download cleaned file (after 8.3) | ✔ 13 rows (11 accepted + 2 duplicates) in file order, Version 3 columns, auto-fixes and suggestions applied, dates as YYYY-MM-DD. Rejected rows stay in their own download. Importing the cleaned file after 8.4 gives 0 auto-fixes and **13 skipped duplicates**. |
+| 8.10 | The **original** messy file again after 8.4 | ⚠ 0 accepted, 9 duplicates, 10 rejected, with new suggestions (S2 now proposes 016/017, because 013 and 015 are saved). Import the cleaned file instead. |
+| 8.11 | `clean_import.csv` → Confirm (fresh seed) | ✔ 7 accepted. Dashboard **482 / 11 / 5 / 10 / 2, 98.01%, 99.61%**. |
+| 8.12 | Class row on a Saturday | ✔ Rejected: "Row 9: PY101 has no class on Saturday 12/09/2026." |
+| 8.13 | Class row on the DS102 holiday | ✔ Rejected: "Row 10: DS102 has no class on Wednesday 16/09/2026." |
+| 8.14 | Tutorial rows on a new date | ✔ One new tutorial (T1) is planned and shared by every row of that date (rows 12 and 20); created only at Confirm. |
+| 8.15 | Row filling an existing Unknown | ✔ Gap filled (rows 2 to 5). |
+| 8.16 | Same status as saved | ✔ Skipped as duplicate (row 18); a row repeating an earlier row (row 19) too. |
+| 8.17 | Existing ID, same name in different case | ✔ Accepted, saved spelling kept. |
+| 8.18 | New student | ✔ Created and enrolled **from their earliest date in the file**, so not Unknown for earlier sessions. |
+| 8.19 | Row before a late joiner's start (e.g. DS102 07/09 for 010) | ✔ Rejected: "Student 010 is enrolled in DS102 from 14/09/2026, not on 07/09/2026." |
+| 8.20 | Row outside the course period | ✔ Rejected: "Row 11: PY101 runs from 07/09/2026 to 25/09/2026, not on 02/10/2026." |
+| 8.21 | Unknown course `BIO200` / status `maybe` / ID `0` | ✔ Rejected (rows 8, 7, 6). Import never creates courses. |
+| 8.22 | One student and session with two statuses in the file | ✔ First row kept, later row rejected (no suggestion). |
+| 8.23 | Saving fails halfway | Nothing saved (one transaction); an error asks you to validate again. |
+| 8.24 | Download rejected rows / template | CSV with a `reason` column / header-only template with the Version 3 columns. |
 
 ## 9. Dashboard
 

@@ -1344,8 +1344,10 @@ def show_last_import_result():
         return
 
     st.success(
-        f"Import of {result['filename']} finished. Accepted and saved: {result['accepted']}. "
-        f"Skipped duplicates: {result['duplicates']}. Rejected: {result['rejected']}."
+        f"Import of {result['filename']} finished. Auto-fixes: {result['fixes']}. "
+        f"Accepted suggestions: {result['accepted_suggestions']}. "
+        f"Saved: {result['accepted']}. Skipped duplicates: {result['duplicates']}. "
+        f"Rejected: {result['rejected']}."
     )
 
     rejected_table = result["rejected_table"]
@@ -1359,14 +1361,28 @@ def show_last_import_result():
         )
 
 
-def validate_upload(connection, uploaded_file, rows):
-    """Validate the rows and keep the result in session_state (the database is not changed)."""
-    accepted, duplicates, rejected = importer.validate_rows(connection, rows)
+def validate_upload(connection, uploaded_file, rows, accepted_keys=()):
+    """Validate the rows and keep the result in session_state (the database is not changed).
+
+    accepted_keys are the suggestions ticked under Suggestions (FR-31); Validate starts
+    with none, so every suggestion is unticked by default.
+    """
+    result = importer.review_rows(connection, rows, accepted_keys)
+    accepted = result["accepted"]
+    duplicates = result["duplicates"]
+
+    # Each validation gets new widget keys, so old ticks are not shown again.
+    run = st.session_state.get("import_validation_run", 0) + 1
+    st.session_state["import_validation_run"] = run
 
     st.session_state["import_validation"] = {
         "file_id": uploaded_file.file_id,
         "filename": uploaded_file.name,
+        "run": run,
         "accepted": accepted,
+        "suggestions": result["suggestions"],
+        "fixes_table": importer.make_fixes_table(result["fixes"]),
+        "cleaned_csv": importer.make_cleaned_csv(accepted, duplicates),
         # Dates are shown as DD/MM/YYYY (BR-23); "accepted" keeps the stored form for saving.
         "accepted_table": analytics.format_date_columns(
             importer.make_table(accepted, with_reason=False)
@@ -1375,7 +1391,7 @@ def validate_upload(connection, uploaded_file, rows):
             importer.make_table(duplicates, with_reason=True)
         ),
         "rejected_table": analytics.format_date_columns(
-            importer.make_table(rejected, with_reason=True)
+            importer.make_table(result["rejected"], with_reason=True)
         ),
     }
 
@@ -1399,16 +1415,81 @@ def show_table_with_reasons(table):
     )
 
 
-def show_review(validation_result):
-    """Show the counts and the accepted, duplicate and rejected rows (Review issues step)."""
+def describe_suggestion_row(suggestion):
+    """Return 'Row 13: 011 Fabrice Gasana' for a suggestion's label."""
+    return (
+        f"Row {suggestion[importer.ROW_COLUMN]}: "
+        f"{suggestion['student_id']} {suggestion['full_name']}"
+    )
+
+
+def show_suggestions(connection, uploaded_file, rows, validation_result):
+    """Show each suggestion with an Accept tick, or a choice for a status (FR-31).
+
+    Apply suggestions validates the file again with the accepted ones. Nothing is
+    saved before Confirm.
+    """
+    suggestions = validation_result["suggestions"]
+    st.markdown("**Suggestions** (nothing is changed unless you accept it)")
+    if not suggestions:
+        st.caption("No suggestions for this file.")
+        return
+
+    run = validation_result["run"]
+    with st.form(f"suggestions_form_{run}"):
+        accepted_keys = []
+        for suggestion in suggestions:
+            widget_key = f"suggestion_{run}_{suggestion['key']}"
+            label = describe_suggestion_row(suggestion)
+            if suggestion["keep_text"] is None:
+                ticked = st.checkbox(
+                    f"{label}: accept \"{suggestion['text']}\"",
+                    value=suggestion["accepted"],
+                    key=widget_key,
+                )
+            else:
+                options = [suggestion["keep_text"], suggestion["text"]]
+                choice = st.radio(
+                    label,
+                    options,
+                    index=1 if suggestion["accepted"] else 0,
+                    horizontal=True,
+                    key=widget_key,
+                )
+                ticked = choice == suggestion["text"]
+            if ticked:
+                accepted_keys.append(suggestion["key"])
+
+        if st.form_submit_button("Apply suggestions"):
+            validate_upload(connection, uploaded_file, rows, accepted_keys)
+            st.rerun()
+
+
+def show_review(connection, uploaded_file, rows, validation_result):
+    """Show the counts, Auto-fixed, Suggestions and the accepted, duplicate and rejected rows."""
+    fixes_table = validation_result["fixes_table"]
     accepted_table = validation_result["accepted_table"]
     duplicates_table = validation_result["duplicates_table"]
     rejected_table = validation_result["rejected_table"]
+    suggestions = validation_result["suggestions"]
 
-    count_columns = st.columns(3)
-    count_columns[0].metric("Accepted", len(accepted_table))
-    count_columns[1].metric("Skipped duplicates", len(duplicates_table))
-    count_columns[2].metric("Rejected", len(rejected_table))
+    count_columns = st.columns(5)
+    count_columns[0].metric("Auto-fixes", len(fixes_table))
+    count_columns[1].metric(
+        "Accepted suggestions",
+        f"{importer.count_accepted_suggestions(suggestions)} of {len(suggestions)}",
+    )
+    count_columns[2].metric("Accepted", len(accepted_table))
+    count_columns[3].metric("Skipped duplicates", len(duplicates_table))
+    count_columns[4].metric("Rejected", len(rejected_table))
+
+    st.markdown("**Auto-fixed** (applied automatically)")
+    if fixes_table.empty:
+        st.caption("Nothing needed fixing.")
+    else:
+        st.dataframe(fixes_table, hide_index=True, width="stretch")
+
+    show_suggestions(connection, uploaded_file, rows, validation_result)
 
     st.markdown("**Accepted rows** (saved only after Confirm)")
     if accepted_table.empty:
@@ -1420,8 +1501,17 @@ def show_review(validation_result):
         st.markdown("**Skipped duplicates** (already saved or repeated in this file)")
         show_table_with_reasons(duplicates_table)
 
+    if not accepted_table.empty or not duplicates_table.empty:
+        st.download_button(
+            "Download cleaned file",
+            data=validation_result["cleaned_csv"],
+            file_name="cleaned_" + validation_result["filename"],
+            mime="text/csv",
+            key="download_cleaned_review",
+        )
+
     if not rejected_table.empty:
-        st.markdown("**Rejected rows**")
+        st.markdown("**Rejected**")
         show_table_with_reasons(rejected_table)
         st.download_button(
             "Download rejected rows (CSV)",
@@ -1448,6 +1538,10 @@ def confirm_import(connection, validation_result):
 
     st.session_state["import_result"] = {
         "filename": validation_result["filename"],
+        "fixes": len(validation_result["fixes_table"]),
+        "accepted_suggestions": importer.count_accepted_suggestions(
+            validation_result["suggestions"]
+        ),
         "accepted": saved,
         "duplicates": len(validation_result["duplicates_table"]),
         "rejected": len(validation_result["rejected_table"]),
@@ -1464,7 +1558,8 @@ def show_import_tab(connection):
     st.caption(
         "Required columns: " + ", ".join(importer.REQUIRED_COLUMNS)
         + ". Optional: type (Class, the default, or Tutorial). "
-        "Dates as DD/MM/YYYY or YYYY-MM-DD."
+        "Dates as DD/MM/YYYY or YYYY-MM-DD. Spaces, capitals, P/L/E/A, short IDs "
+        "such as 4 and dates such as 7/9/2026 are fixed automatically."
     )
     show_template_download()
 
@@ -1503,8 +1598,8 @@ def show_import_tab(connection):
     if validation_result is None:
         return
 
-    # Step 4: Review issues
-    show_review(validation_result)
+    # Step 4: Review issues, with auto-fixes and suggested fixes (FR-31)
+    show_review(connection, uploaded_file, rows, validation_result)
 
     # Step 5: Confirm
     if validation_result["accepted"]:

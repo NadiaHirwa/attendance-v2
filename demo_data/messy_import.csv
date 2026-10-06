@@ -1,20 +1,20 @@
 Course_Code,Date,Student_ID,Full_Name,Status,Type,Notes
-PY101,16/09/2026,003,Grace O'Neil,P,,fills a missing record (date as DD/MM/YYYY)
-ds102,2026-09-24,008,Kevin Ndayishimiye,late,tutorial,fills a missing tutorial record (lowercase codes)
-PY101,2026-09-07,12A,Bad Id,P,,bad student ID
-PY101,2026-09-07,006,-Patrick,P,,bad name
-PY101,2026-02-30,007,Diane Mukamana,P,,bad date
-PY101,2026-09-07,008,Kevin Ndayishimiye,maybe,,bad status
-BIO200,2026-09-07,009,Sandrine Ingabire,P,,unknown course
-PY101,2026-09-07,011,Claudine Mukamana,P,,saved student ID with a different name
-PY101,12/09/2026,001,Nadia Hirwa,P,,class row on a Saturday (no class)
-DS102,16/09/2026,001,Nadia Hirwa,P,,class row on the DS102 holiday (no class)
-PY101,16/09/2026,003,Grace O'Neil,Present,,exact duplicate of row 2
-PY101,2026-09-07,001,Nadia Hirwa,P,,exact duplicate of a saved record
-PY101,2026-09-08,002,Jean-Paul Mugisha,P,,conflicting status (saved as Absent)
-MA103,2026-09-21,014,Fabrice Gasana,A,,new student: accepted and enrolled from this date
-MA103,2026-09-21,014,Fabrice Gasana-Mugabo,P,,same new ID with a different name in this file
-MA103,2026-09-19,005,Aline Uwase,P,Tutorial,new Saturday tutorial: created at Confirm
-MA103,2026-09-19,006,Patrick Habimana,P,Tutorial,same new tutorial as the row above
-PY101,2026-10-02,001,Nadia Hirwa,P,,after the course ends
-DS102,2026-09-07,010,Olivier Nkurunziza,P,,before the late joiner's start (14/09/2026)
+  PY101 ,16/09/2026,3,Grace O’Neil,p,,auto-fixes: spaces; DD/MM/YYYY date; ID 3 -> 003; curly apostrophe; p -> Present
+ds102,24/9/2026,08,Kevin  Ndayishimiye,L,tut,auto-fixes: capitals; D/M/YYYY date; ID 08 -> 008; double space; L -> Late; tut -> Tutorial
+MA103,2026-09-25,007,Diane Mukamana,excused,CLASS,auto-fixes: full word in lowercase; type capitals
+PY101,2026-09-19,011,Claudine Umutoni,E,Tutorial,auto-fix: E -> Excused (fills a missing tutorial record)
+PY101,2026-09-07,0,Zero Id,P,,rejected: ID 0 is not padded
+PY101,2026-09-07,001,Nadia Hirwa,maybe,,rejected: bad status
+BIO200,2026-09-07,009,Sandrine Ingabire,P,,rejected: unknown course
+PY101,12/09/2026,001,Nadia Hirwa,P,,rejected: class row on a Saturday
+DS102,16/09/2026,001,Nadia Hirwa,P,,rejected: class row on the DS102 removed holiday
+PY101,2026-10-02,001,Nadia Hirwa,P,,rejected: after the course ends
+MA103,2026-09-19,004,eric niyonzimma,P,Tutorial,S1: saved ID with a similar name (new Saturday tutorial)
+PY101,2026-09-21,011,Fabrice Gasana,absent,,S2: saved ID with a different name -> next free ID 013
+PY101,2026-09-22,011,Fabrice Gasana,P,,S2: same pair -> the same ID 013
+MA103,2026-09-21,014,Alice Uwimana,P,,new student: accepted and enrolled from this date
+MA103,2026-09-22,014,Alice Kayitesi,P,,S3: same new ID with another name -> next free ID 015
+PY101,2026-09-08,002,Jean-Paul Mugisha,P,,S4: saved as Absent
+PY101,2026-09-07,001,Nadia Hirwa,Present,,duplicate of a saved record
+PY101,16/09/2026,003,Grace O'Neil,Present,,duplicate of row 2
+MA103,19/09/2026,005,Aline Uwase,a,tutorial,auto-fixes: a -> Absent; type capitals (shares the new tutorial with row 12)

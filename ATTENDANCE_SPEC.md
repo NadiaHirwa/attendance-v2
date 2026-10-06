@@ -259,7 +259,7 @@ attendance/
 ├── seed_demo.py       # creates a clean demo database
 ├── demo_data/
 │   ├── clean_import.csv
-│   └── messy_import.csv   # contains every kind of rejection and a duplicate
+│   └── messy_import.csv   # every auto-fix, suggestions S1 to S4, rejections, duplicates
 │                          # [V3] and every auto-fix and suggestion type
 ├── tests/                 # one test file per module or feature
 ├── requirements.txt   # streamlit, pandas
@@ -333,6 +333,9 @@ Decisions made while building, where the sections above did not say what to do.
 | FR-28 | **[V3, Stage 4]** The **class register** is in the All students view, with its own Block → Course picker and a Week box ("All weeks" or one week). With one week, only that week's columns are shown and the totals, rate and deducted marks count that week only. The download is the table itself. |
 | FR-30 | **[V3, Stage 4]** The sidebar filter is Block ("All blocks", each block, and "No block" for courses of an older database) → Course (that block's courses, or "All courses") → date range. The range starts as the course's period, else the block's, else the first and last session dates. The caption names the block, the course and the dates. |
 | FR-29 | **[V3, Stage 3]** The **Deductions export** is in Reports (All students view): one course at a time, using the sidebar filters, with the columns Student ID, Full name, Late, Absent, Excused, Not recorded (a count) and Deducted marks, sorted by student ID; the file is named `deductions_<COURSE>.csv`. |
+| FR-31 | **[V3, Stage 5] Auto-fixes** run on every row before validation (`importer.auto_fix_row()`): spaces, curly apostrophes, course/status/type capitals, P/L/E/A, IDs of 1 or 2 ASCII digits padded to 3 (`0` and `00` are not fixed), dates `D/M/YYYY`, `DD/MM/YYYY` → `YYYY-MM-DD`, and type `tut`/`tutorial`/`class` in any case. An empty type stays empty (it already means Class). Names never change except spaces and apostrophes. Each fix is listed as row, column, before → after and why, including fixes on rows rejected later. A value that cannot be fixed keeps its original text, so the reason quotes what the file contained. Typed dates elsewhere in the app still need the exact form (`parse_date` is unchanged). |
+| FR-31 | **[V3, Stage 5] Suggestions** are checked in the order of Version 2: S1/S2 (saved ID, name differs) and S3 (new ID with a second name in this file) at the student check, S4 (status differs from the saved record) at the status check. S1 needs `difflib.SequenceMatcher` ratio ≥ 0.8 on casefolded names; otherwise S2. **Next free ID** = the lowest 3-digit ID that is not saved, **not used anywhere in the file** (so a proposal cannot clash with a later row) and not already proposed. The same (file ID, casefolded name) pair always gets the same ID. A row whose suggestion is not accepted stays rejected; its reason is the Version 2 reason plus `Suggestion: "..."`. A conflict between two rows of the file about a status is still rejected with no suggestion. Because suggestions are checked in order, accepting S1 can reveal an S4 on the next Apply. |
+| FR-31 | **[V3, Stage 5] Review screen:** counts (Auto-fixes, Accepted suggestions "N of M", Accepted, Skipped duplicates, Rejected), then **Auto-fixed** (read-only table), **Suggestions** (a form: a tick per S1–S3 row, a "Keep saved X" / "Use file: Y" choice per S4 row, all unaccepted by default) with **Apply suggestions**, the accepted and duplicate rows, **Download cleaned file** and **Rejected** with its own download. Validate again resets every suggestion to unaccepted. The cleaned file has the accepted and duplicate rows in file order, in the Version 3 columns, with dates in the stored form YYYY-MM-DD (an exception to the BR-23 display rule, so importing it again needs no auto-fixes). Importing the **original** file again after Confirm proposes new IDs for its S2/S3 rows (the IDs proposed before are now saved), so import the cleaned file instead. **"Use file"** sets `update` on the row; `import_records()` then runs an UPDATE (status, source = filename, recorded_at) inside the same transaction as the inserts. The result message lists auto-fixes, accepted suggestions, saved rows (inserted + updated), duplicates and rejected. |
 | NFR-03 | Lines are at most 99 characters (PEP 8 allows 99 when a project agrees on it). |
 
 ## 12. [V3] Demo data
@@ -349,6 +352,7 @@ completeness 99.21%.
 - A realistic mix of Present, Late, Excused and Absent, a few Unknown, at least one student with 2+ absences in a row, at least one with deductions over 10.
 - Fixed data: every run gives the same numbers. `seed_demo.py` prints the totals **and the deductions per student per course**. At least two students are verified by hand and put in tests.
 - `demo_data/messy_import.csv` and `clean_import.csv` are rewritten for the new columns. The messy file triggers every auto-fix and every suggestion type, plus the usual rejections.
+- **[Stage 5] messy_import.csv** (19 rows): 31 auto-fixes and 5 suggestions (S1, S2 twice for the same pair → 013, S3 → 015, S4). With no suggestion accepted: 6 accepted / 2 duplicates / 11 rejected; after Confirm 479 P / 11 L / 6 E / 11 A / 15 Unknown, 522 expected, 97.80%, 97.13%. With all accepted: 11 / 2 / 6; after Confirm 483 / 11 / 6 / 11 / 22, 533 expected, 97.82%, 95.87%.
 
 ---
 

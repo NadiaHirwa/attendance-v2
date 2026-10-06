@@ -916,6 +916,7 @@ def import_records(connection, records, source, enrollment_starts):
     The student is enrolled before attendance is saved, so BR-09 holds (IR-06).
     enrollment_starts maps (student_id, course_code) to the start date of a NEW
     enrollment (BR-15); an existing enrollment keeps its dates.
+    A record with 'update' set to True changes the saved status instead (FR-31 S4).
     If any row fails, the whole import is rolled back and nothing is saved.
     """
     recorded_at = datetime.now().isoformat(timespec="seconds")
@@ -945,6 +946,18 @@ def import_records(connection, records, source, enrollment_starts):
                 (record["student_id"], record["course_code"],
                  enrollment_starts[enrollment_key]),
             )
+            if record.get("update"):
+                # "Use file" (FR-31 S4): the saved record takes the file's status.
+                connection.execute(
+                    """
+                    UPDATE attendance
+                    SET status = ?, source = ?, recorded_at = ?
+                    WHERE student_id = ? AND session_id = ?
+                    """,
+                    (record["status"], source, recorded_at,
+                     record["student_id"], record["session_id"]),
+                )
+                continue
             # A plain INSERT: if the record already exists, the error cancels the import.
             connection.execute(
                 """

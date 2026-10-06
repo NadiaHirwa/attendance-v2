@@ -206,31 +206,117 @@ class TestManageOnSeed(SeedV3TestCase):
 
 class TestDemoFiles(SeedV3TestCase):
 
-    def test_messy_file_counts(self):
-        """FR-10: messy_import.csv gives 5 accepted, 2 skipped duplicates and 12 rejected."""
-        accepted, duplicates, rejected = self.read_demo_file("messy_import.csv")
+    def review_messy_file(self, accept_all):
+        """Review messy_import.csv, with no suggestions or all of them accepted (FR-31)."""
+        with open(os.path.join(DEMO_FOLDER, "messy_import.csv"), "rb") as demo_file:
+            rows, error = importer.read_csv(demo_file.read())
+        self.assertIsNone(error)
+        result = importer.review_rows(self.connection, rows)
+        if accept_all:
+            keys = []
+            for suggestion in result["suggestions"]:
+                keys.append(suggestion["key"])
+            result = importer.review_rows(self.connection, rows, keys)
+        return result
 
-        self.assertEqual((len(accepted), len(duplicates), len(rejected)), (5, 2, 12))
+    def count_result(self, result):
+        """Return (accepted, duplicates, rejected) counts."""
+        return len(result["accepted"]), len(result["duplicates"]), len(result["rejected"])
+
+    def test_messy_file_counts(self):
+        """FR-31: messy_import.csv gives 31 auto-fixes, 5 suggestions, 6 / 2 / 11."""
+        result = self.review_messy_file(accept_all=False)
+
+        self.assertEqual(len(result["fixes"]), 31)
+        kinds = []
+        for suggestion in result["suggestions"]:
+            kinds.append(suggestion["kind"])
+        self.assertEqual(kinds, ["S1", "S2", "S2", "S3", "S4"])
+        self.assertEqual(self.count_result(result), (6, 2, 11))
+
         reasons = ""
-        for row in rejected:
+        for row in result["rejected"]:
             reasons = reasons + row["reason"] + "\n"
-        self.assertIn("Row 10: PY101 has no class on Saturday 12/09/2026.", reasons)
-        self.assertIn("Row 11: DS102 has no class on Wednesday 16/09/2026.", reasons)
-        self.assertIn("Row 19: PY101 runs from 07/09/2026 to 25/09/2026, not on 02/10/2026.",
-                      reasons)
-        self.assertIn("Student 010 is enrolled in DS102 from 14/09/2026, not on 07/09/2026.",
-                      reasons)
+        self.assertIn('Row 6: Invalid student ID. Expected exactly 3 digits from 001 to 999. '
+                      'Got "0".', reasons)
         self.assertIn('Got "maybe"', reasons)
+        self.assertIn('Row 8: Unknown course "BIO200".', reasons)
+        self.assertIn("Row 9: PY101 has no class on Saturday 12/09/2026.", reasons)
+        self.assertIn("Row 10: DS102 has no class on Wednesday 16/09/2026.", reasons)
+        self.assertIn("Row 11: PY101 runs from 07/09/2026 to 25/09/2026, not on 02/10/2026.",
+                      reasons)
+        self.assertIn('Suggestion: "Use saved name Eric Niyonzima"', reasons)
+        self.assertIn('Suggestion: "Assign next free ID 013 as a new student"', reasons)
+        self.assertIn('Suggestion: "Assign next free ID 015 as a new student"', reasons)
+        self.assertIn('Suggestion: "Use file: Present"', reasons)
+
+    def test_messy_file_counts_after_accepting_all(self):
+        """FR-31: with every suggestion accepted, 11 accepted / 2 duplicates / 6 rejected."""
+        result = self.review_messy_file(accept_all=True)
+
+        self.assertEqual(importer.count_accepted_suggestions(result["suggestions"]), 5)
+        self.assertEqual(self.count_result(result), (11, 2, 6))
+        new_ids = {}
+        for row in result["accepted"]:
+            new_ids[row["row"]] = (row["student_id"], row["full_name"])
+        self.assertEqual(new_ids[12], ("004", "Eric Niyonzima"))
+        self.assertEqual(new_ids[13], ("013", "Fabrice Gasana"))
+        self.assertEqual(new_ids[14], ("013", "Fabrice Gasana"))
+        self.assertEqual(new_ids[16], ("015", "Alice Kayitesi"))
 
     def test_messy_file_shares_one_new_tutorial(self):
-        """IR-13: rows 17 and 18 share the new MA103 Saturday tutorial MA103-2026-09-19-T1."""
-        accepted, duplicates, rejected = self.read_demo_file("messy_import.csv")
+        """IR-13: rows 12 and 20 share the new MA103 Saturday tutorial MA103-2026-09-19-T1."""
+        result = self.review_messy_file(accept_all=True)
 
         tutorial_ids = []
-        for row in accepted:
+        for row in result["accepted"]:
             if row["type"] == "Tutorial" and row["course_code"] == "MA103":
                 tutorial_ids.append(row["session_id"])
         self.assertEqual(tutorial_ids, ["MA103-2026-09-19-T1", "MA103-2026-09-19-T1"])
+
+    def test_messy_file_totals_before_suggestions(self):
+        """FR-31: Confirm with no suggestions accepted; totals by hand.
+
+        Fills 003 PY101 16/09 (P), 008 DS102 24/09 T1 (L), 007 MA103 25/09 (E) and
+        011 PY101 19/09 T1 (E). New 014 in MA103 from 21/09: 7 expected, 1 Present.
+        New MA103 tutorial 19/09: 10 expected, 005 Absent.
+        Present 479, Late 11, Excused 6, Absent 11, Unknown 4 - 4 + 6 + 9 = 15;
+        expected 505 + 7 + 10 = 522. Rate 490 / 501 = 97.80%; completeness 507 / 522 = 97.13%.
+        """
+        result = self.review_messy_file(accept_all=False)
+        importer.apply_import(self.connection, result["accepted"], "messy_import.csv")
+
+        self.assert_totals((479, 11, 6, 11, 15), 522, "97.80%", "97.13%")
+
+    def test_messy_file_totals_after_all_suggestions(self):
+        """FR-31: Confirm with every suggestion accepted; totals by hand.
+
+        Adds 004's MA103 tutorial (P), new 013 in PY101 from 21/09 (5 expected: A, P),
+        new 015 in MA103 from 22/09 (6 expected: P), and 002's 08/09 Absent becomes Present.
+        Present 483, Late 11, Excused 6, Absent 11, Unknown 15 - 1 + 3 + 5 = 22;
+        expected 522 + 5 + 6 = 533. Rate 494 / 505 = 97.82%; completeness 511 / 533 = 95.87%.
+        """
+        result = self.review_messy_file(accept_all=True)
+        importer.apply_import(self.connection, result["accepted"], "messy_import.csv")
+
+        self.assert_totals((483, 11, 6, 11, 22), 533, "97.82%", "95.87%")
+        row = self.connection.execute(
+            "SELECT status, source FROM attendance WHERE student_id = ? AND session_id = ?",
+            ("002", "PY101-2026-09-08"),
+        ).fetchone()
+        self.assertEqual((row["status"], row["source"]), ("Present", "messy_import.csv"))
+
+    def assert_totals(self, counts, expected, rate, completeness):
+        """Check the dashboard totals after an import."""
+        totals = analytics.calculate_dashboard_metrics(self.records())
+        self.assertEqual(
+            (totals["present"], totals["late"], totals["excused"],
+             totals["absent"], totals["unknown"]),
+            counts,
+        )
+        self.assertEqual(totals["expected"], expected)
+        self.assertEqual(analytics.format_rate(totals["attendance_rate"]), rate)
+        self.assertEqual(analytics.format_rate(totals["completeness"]), completeness)
 
     def test_clean_file_totals(self):
         """FR-10: clean_import.csv gives 7 accepted; totals after Confirm, by hand.

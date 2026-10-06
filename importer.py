@@ -2,7 +2,8 @@
 
 The workflow has three steps that the app calls in order:
 1. read_csv() turns the uploaded bytes into rows (IR-01).
-2. validate_rows() sorts rows into accepted, duplicates and rejected.
+2. review_rows() auto-fixes the rows, suggests fixes for name and status
+   conflicts (FR-31) and sorts rows into accepted, duplicates and rejected.
    It finds the class day or tutorial of each row (IR-12, IR-13), and checks the
    course's dates (BR-16) and an existing enrollment's dates (BR-15).
    It reads the database but never writes to it (IR-09).
@@ -10,6 +11,7 @@ The workflow has three steps that the app calls in order:
 """
 
 import csv
+import difflib
 import io
 
 import pandas as pd
@@ -28,6 +30,9 @@ REQUIRED_COLUMNS = [
 TYPE_COLUMN = "type"
 FILE_COLUMNS = REQUIRED_COLUMNS + [TYPE_COLUMN]
 ROW_COLUMN = "row"
+FIX_COLUMNS = [ROW_COLUMN, "column", "before", "after", "why"]
+# S1: a saved name and a file name this alike (0 to 1, ignoring case) are the same person.
+SIMILAR_NAME_RATIO = 0.8
 REASON_COLUMN = "reason"
 # Row 1 of the file is the header, so the first data row is row 2, like in a spreadsheet.
 FIRST_DATA_ROW = 2
@@ -110,7 +115,100 @@ def is_blank_line(line):
     return True
 
 
-# ---------- Step 2: validate the rows ----------
+# ---------- Step 2a: auto-fixes (FR-31) ----------
+
+def describe_fix(before, after, main_why):
+    """Return why a value changed: extra spaces, capitals, or main_why for anything else."""
+    whys = []
+    trimmed = " ".join(before.split())
+    if trimmed != before:
+        whys.append(validation.FIX_SPACES)
+
+    if trimmed == after:
+        pass
+    elif trimmed.casefold() == after.casefold():
+        whys.append(validation.FIX_CAPITALS)
+    else:
+        whys.append(main_why)
+    return " ".join(whys)
+
+
+def fix_student_id(value):
+    """Return (fixed ID, why). '4' and '04' become '004'; '0', '00' and '12A' are not fixed."""
+    return validation.pad_student_id(value), validation.FIX_STUDENT_ID
+
+
+def fix_full_name(value):
+    """Return (fixed name, why). Only spaces and apostrophes change, never the letters."""
+    if "’" in value:
+        return validation.clean_name(value), validation.FIX_APOSTROPHE
+    return validation.clean_name(value), validation.FIX_SPACES
+
+
+def fix_course_code(value):
+    """Return (fixed code, why). A code that is still invalid is left as it was."""
+    return validation.normalize_course_code(value), validation.FIX_CAPITALS
+
+
+def fix_date(value):
+    """Return (fixed date, why). D/M/YYYY, DD/MM/YYYY and YYYY-MM-DD become YYYY-MM-DD."""
+    fixed = validation.parse_date(value)
+    if fixed is None:
+        fixed = validation.parse_short_date(value)
+    return fixed, validation.FIX_DATE
+
+
+def fix_type(value):
+    """Return (fixed type, why). 'tut', 'tutorial' and 'class' in any case are fixed.
+
+    An empty type stays empty; it already means Class.
+    """
+    if value.strip() == "":
+        return value, validation.FIX_TYPE
+    return validation.normalize_session_type(value), validation.FIX_TYPE
+
+
+def fix_status(value):
+    """Return (fixed status, why). P/L/E/A and full words in any case are fixed."""
+    return validation.normalize_status(value), validation.FIX_STATUS
+
+
+FIXERS = [
+    ("course_code", fix_course_code),
+    ("date", fix_date),
+    ("student_id", fix_student_id),
+    ("full_name", fix_full_name),
+    ("status", fix_status),
+    (TYPE_COLUMN, fix_type),
+]
+
+
+def auto_fix_row(raw_row):
+    """Return (fixed row, fixes) for one row of the file (FR-31).
+
+    Each fix is a dict with the row, the column, the value before and after, and why.
+    A value that cannot be fixed is left as it was, so it is rejected later with
+    the original text in its reason.
+    """
+    fixed_row = dict(raw_row)
+    fixes = []
+    for column, fixer in FIXERS:
+        before = raw_row[column]
+        after, main_why = fixer(before)
+        if after is None or after == before:
+            continue
+        fixed_row[column] = after
+        fixes.append({
+            ROW_COLUMN: raw_row[ROW_COLUMN],
+            "column": column,
+            "before": before,
+            "after": after,
+            "why": describe_fix(before, after, main_why),
+        })
+    return fixed_row, fixes
+
+
+# ---------- Step 2b: validate the rows ----------
 
 def make_reason(row_number, message):
     """Return a reason like 'Row 7: Invalid student ID. ...'."""
@@ -173,29 +271,107 @@ def clean_row(raw_row):
     return cleaned, None
 
 
-def check_student(connection, row, file_students):
-    """Return a conflict reason if the student ID has a different name (IR-04), else None."""
+# ---------- Step 2c: suggestions (FR-31) ----------
+
+def is_similar_name(first_name, second_name):
+    """Return True if two names are at least 80% alike, ignoring case (S1)."""
+    ratio = difflib.SequenceMatcher(None, first_name.casefold(), second_name.casefold()).ratio()
+    return ratio >= SIMILAR_NAME_RATIO
+
+
+def find_next_free_id(taken_ids):
+    """Return the lowest 3-digit student ID that is not taken, or None if all are."""
+    for number in range(1, 1000):
+        student_id = f"{number:03d}"
+        if student_id not in taken_ids:
+            return student_id
+    return None
+
+
+def propose_new_id(new_ids, student_id, full_name):
+    """Return the proposed new ID for a (file ID, name) pair (S2, S3).
+
+    new_ids has 'taken' (saved IDs, IDs in the file and IDs already proposed) and
+    'proposals'. The same pair always gets the same ID, so every row of that
+    student moves together.
+    """
+    key = (student_id, full_name.casefold())
+    if key not in new_ids["proposals"]:
+        new_id = find_next_free_id(new_ids["taken"])
+        if new_id is None:
+            return None
+        new_ids["proposals"][key] = new_id
+        new_ids["taken"].add(new_id)
+    return new_ids["proposals"][key]
+
+
+def make_suggestion(row, kind, text, keep_text=None):
+    """Return a suggestion for one row. keep_text is the default choice of S4."""
+    return {
+        "key": f"{row[ROW_COLUMN]}-{kind}",
+        ROW_COLUMN: row[ROW_COLUMN],
+        "kind": kind,
+        "student_id": row["student_id"],
+        "full_name": row["full_name"],
+        "text": text,
+        "keep_text": keep_text,
+        "accepted": False,
+    }
+
+
+def check_student(connection, row, file_students, new_ids, accepted_keys):
+    """Check the student ID and name (IR-04). Return (reason, suggestion).
+
+    S1: a saved ID with a similar name may use the saved name.
+    S2: a saved ID with a different name may move to the next free ID.
+    S3: a new ID already used in this file with another name: the later name may
+    move to the next free ID. An accepted suggestion changes the row and the reason
+    is None; otherwise the row is rejected and the reason mentions the suggestion.
+    """
     student_id = row["student_id"]
     full_name = row["full_name"]
-
     saved_student = database.get_student(connection, student_id)
+
     if saved_student is not None:
-        if saved_student["full_name"].casefold() != full_name.casefold():
-            message = validation.NAME_CONFLICT_SAVED_ERROR.format(
-                student_id, saved_student["full_name"], full_name
-            )
-            return make_reason(row[ROW_COLUMN], message)
-        return None
-
-    if student_id in file_students:
+        saved_name = saved_student["full_name"]
+        if saved_name.casefold() == full_name.casefold():
+            return None, None
+        message = validation.NAME_CONFLICT_SAVED_ERROR.format(student_id, saved_name, full_name)
+        if is_similar_name(saved_name, full_name):
+            text = validation.USE_SAVED_NAME_SUGGESTION.format(saved_name)
+            suggestion = make_suggestion(row, "S1", text)
+            change = ("full_name", saved_name)
+        else:
+            suggestion = None
+            kind = "S2"
+    elif student_id in file_students:
         first_name, first_row = file_students[student_id]
-        if first_name.casefold() != full_name.casefold():
-            message = validation.NAME_CONFLICT_FILE_ERROR.format(
-                student_id, first_row, first_name, full_name
-            )
-            return make_reason(row[ROW_COLUMN], message)
+        if first_name.casefold() == full_name.casefold():
+            return None, None
+        message = validation.NAME_CONFLICT_FILE_ERROR.format(
+            student_id, first_row, first_name, full_name
+        )
+        suggestion = None
+        kind = "S3"
+    else:
+        return None, None
 
-    return None
+    if suggestion is None:
+        new_id = propose_new_id(new_ids, student_id, full_name)
+        if new_id is None:
+            return make_reason(row[ROW_COLUMN], message), None
+        text = validation.NEW_ID_SUGGESTION.format(new_id)
+        suggestion = make_suggestion(row, kind, text)
+        change = ("student_id", new_id)
+
+    if suggestion["key"] in accepted_keys:
+        suggestion["accepted"] = True
+        column, value = change
+        row[column] = value
+        return None, suggestion
+
+    message += validation.SUGGESTION_REASON.format(text)
+    return make_reason(row[ROW_COLUMN], message), suggestion
 
 
 def check_course_period(connection, row):
@@ -284,10 +460,13 @@ def check_enrollment_dates(connection, row):
     return make_reason(row[ROW_COLUMN], message)
 
 
-def check_status(connection, row, file_statuses):
+def check_status(connection, row, file_statuses, accepted_keys):
     """Compare the row with saved and earlier records for the same student and session.
 
-    Returns (result, reason) where result is 'new', 'duplicate' (IR-07) or 'conflict' (IR-08).
+    Returns (result, reason, suggestion). The result is 'new', 'duplicate' (IR-07),
+    'conflict' (IR-08) or 'update'. A status that differs from the saved record gets
+    suggestion S4: 'Keep saved' is the default (the row is rejected), and an accepted
+    'Use file' makes the result 'update', so Confirm changes the saved record.
     """
     student_id = row["student_id"]
     session_id = row["session_id"]
@@ -296,24 +475,32 @@ def check_status(connection, row, file_statuses):
     saved_status = database.get_status(connection, student_id, session_id)
     if saved_status is not None:
         if saved_status == status:
-            return "duplicate", make_reason(row[ROW_COLUMN], validation.DUPLICATE_SAVED_REASON)
+            reason = make_reason(row[ROW_COLUMN], validation.DUPLICATE_SAVED_REASON)
+            return "duplicate", reason, None
+        text = validation.USE_FILE_STATUS_CHOICE.format(status)
+        keep_text = validation.KEEP_SAVED_STATUS_CHOICE.format(saved_status)
+        suggestion = make_suggestion(row, "S4", text, keep_text)
+        if suggestion["key"] in accepted_keys:
+            suggestion["accepted"] = True
+            return "update", None, suggestion
         message = validation.STATUS_CONFLICT_SAVED_ERROR.format(
             student_id, saved_status, session_id, status
         )
-        return "conflict", make_reason(row[ROW_COLUMN], message)
+        message += validation.SUGGESTION_REASON.format(text)
+        return "conflict", make_reason(row[ROW_COLUMN], message), suggestion
 
     pair = (student_id, session_id)
     if pair in file_statuses:
         first_status, first_row = file_statuses[pair]
         if first_status == status:
             message = validation.DUPLICATE_FILE_REASON.format(first_row)
-            return "duplicate", make_reason(row[ROW_COLUMN], message)
+            return "duplicate", make_reason(row[ROW_COLUMN], message), None
         message = validation.STATUS_CONFLICT_FILE_ERROR.format(
             student_id, first_status, session_id, first_row, status
         )
-        return "conflict", make_reason(row[ROW_COLUMN], message)
+        return "conflict", make_reason(row[ROW_COLUMN], message), None
 
-    return "new", None
+    return "new", None, None
 
 
 def reject(raw_row, reason):
@@ -323,58 +510,114 @@ def reject(raw_row, reason):
     return rejected_row
 
 
-def validate_rows(connection, rows):
-    """Sort rows into (accepted, duplicates, rejected) without writing to the database.
+def find_taken_ids(connection, fixed_rows):
+    """Return the saved student IDs and every valid student ID in the file."""
+    taken_ids = set()
+    for student in database.get_all_students(connection):
+        taken_ids.add(student["student_id"])
+    for row in fixed_rows:
+        student_id = row["student_id"].strip()
+        if validation.is_valid_student_id(student_id):
+            taken_ids.add(student_id)
+    return taken_ids
 
-    Earlier rows of the file count too: if a new student appears twice with
-    different names, the first row is kept and the later one is rejected.
+
+def review_rows(connection, rows, accepted_keys=()):
+    """Auto-fix, validate and suggest fixes for the rows, without writing (FR-31, IR-09).
+
+    accepted_keys holds the keys of the suggestions the user accepted. Returns a dict:
+    'fixes' (every auto-fix), 'suggestions' (with 'accepted' set), and the
+    'accepted', 'duplicates' and 'rejected' rows. Accepted rows that change a saved
+    status have 'update' set to True.
     """
-    accepted = []
-    duplicates = []
-    rejected = []
+    accepted_keys = set(accepted_keys)
+    fixes = []
+    fixed_rows = []
+    for raw_row in rows:
+        fixed_row, row_fixes = auto_fix_row(raw_row)
+        fixed_rows.append(fixed_row)
+        fixes.extend(row_fixes)
+
+    result = {
+        "fixes": fixes,
+        "suggestions": [],
+        "accepted": [],
+        "duplicates": [],
+        "rejected": [],
+    }
 
     # What the accepted rows of this file say so far.
     file_students = {}    # student_id -> (full_name, row number)
     file_tutorials = {}   # (course_code, date) -> planned new tutorial ID
     file_statuses = {}    # (student_id, session_id) -> (status, row number)
+    new_ids = {"taken": find_taken_ids(connection, fixed_rows), "proposals": {}}
 
-    for raw_row in rows:
-        row, reason = clean_row(raw_row)
+    for raw_row, fixed_row in zip(rows, fixed_rows):
+        row, reason = clean_row(fixed_row)
         if row is None:
-            rejected.append(reject(raw_row, reason))
+            result["rejected"].append(reject(raw_row, reason))
             continue
 
         if not database.course_exists(connection, row["course_code"]):
             message = validation.UNKNOWN_COURSE_ERROR.format(row["course_code"])
-            rejected.append(reject(raw_row, make_reason(row[ROW_COLUMN], message)))
+            result["rejected"].append(reject(raw_row, make_reason(row[ROW_COLUMN], message)))
             continue
 
         reason = check_course_period(connection, row)
         if reason is None:
             reason = find_session(connection, row, file_tutorials)
         if reason is None:
-            reason = check_student(connection, row, file_students)
+            reason, suggestion = check_student(
+                connection, row, file_students, new_ids, accepted_keys
+            )
+            if suggestion is not None:
+                result["suggestions"].append(suggestion)
         if reason is None:
             reason = check_enrollment_dates(connection, row)
         if reason is not None:
-            rejected.append(reject(raw_row, reason))
+            result["rejected"].append(reject(raw_row, reason))
             continue
 
-        result, reason = check_status(connection, row, file_statuses)
-        if result == "conflict":
-            rejected.append(reject(raw_row, reason))
+        status_result, reason, suggestion = check_status(
+            connection, row, file_statuses, accepted_keys
+        )
+        if suggestion is not None:
+            result["suggestions"].append(suggestion)
+        if status_result == "conflict":
+            result["rejected"].append(reject(raw_row, reason))
             continue
-        if result == "duplicate":
-            duplicates.append(reject(row, reason))
+        if status_result == "duplicate":
+            result["duplicates"].append(reject(row, reason))
             continue
 
-        accepted.append(row)
+        row["update"] = status_result == "update"
+        result["accepted"].append(row)
         row_number = row[ROW_COLUMN]
         if row["student_id"] not in file_students:
             file_students[row["student_id"]] = (row["full_name"], row_number)
         file_statuses[(row["student_id"], row["session_id"])] = (row["status"], row_number)
 
-    return accepted, duplicates, rejected
+    return result
+
+
+def validate_rows(connection, rows, accepted_keys=()):
+    """Sort rows into (accepted, duplicates, rejected) without writing to the database.
+
+    Earlier rows of the file count too: if a new student appears twice with
+    different names, the first row is kept and the later one is rejected unless
+    its suggestion is accepted.
+    """
+    result = review_rows(connection, rows, accepted_keys)
+    return result["accepted"], result["duplicates"], result["rejected"]
+
+
+def count_accepted_suggestions(suggestions):
+    """Return how many suggestions were accepted."""
+    count = 0
+    for suggestion in suggestions:
+        if suggestion["accepted"]:
+            count += 1
+    return count
 
 
 # ---------- Step 3: save after Confirm ----------
@@ -394,7 +637,10 @@ def find_enrollment_starts(accepted):
 
 
 def apply_import(connection, accepted, filename):
-    """Save the accepted rows in one transaction, with the filename as source (IR-10)."""
+    """Save the accepted rows in one transaction, with the filename as source (IR-10).
+
+    Rows with an accepted 'Use file' choice (S4) update the saved record.
+    """
     enrollment_starts = find_enrollment_starts(accepted)
     return database.import_records(connection, accepted, filename, enrollment_starts)
 
@@ -412,3 +658,27 @@ def make_table(rows, with_reason):
 def make_template_csv():
     """Return an empty CSV template with the required columns and the optional type (FR-11)."""
     return ",".join(FILE_COLUMNS) + "\n"
+
+
+def make_fixes_table(fixes):
+    """Return the auto-fixes as a DataFrame: row, column, before, after, why (FR-31)."""
+    return pd.DataFrame(fixes, columns=FIX_COLUMNS)
+
+
+def make_cleaned_csv(accepted, duplicates):
+    """Return every valid row after fixes and accepted suggestions as CSV text (FR-31).
+
+    Accepted rows and duplicates are listed in file order, in the Version 3 columns,
+    with dates in the stored form YYYY-MM-DD, so importing the cleaned file again
+    needs no auto-fixes. Rejected rows are not included.
+    """
+    rows = sorted(accepted + duplicates, key=lambda row: row[ROW_COLUMN])
+    output = io.StringIO()
+    writer = csv.writer(output, lineterminator="\n")
+    writer.writerow(FILE_COLUMNS)
+    for row in rows:
+        values = []
+        for column in FILE_COLUMNS:
+            values.append(row[column])
+        writer.writerow(values)
+    return output.getvalue()

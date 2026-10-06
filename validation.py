@@ -139,6 +139,20 @@ STATUS_CONFLICT_FILE_ERROR = (
     "Student {} is already {} for session {} earlier in this file (row {}), not {}. "
     "The first row is kept."
 )
+SUGGESTION_REASON = ' Suggestion: "{}". Choose it under Suggestions and click Apply suggestions.'
+# FR-31 suggestions (S1 to S4).
+USE_SAVED_NAME_SUGGESTION = "Use saved name {}"
+NEW_ID_SUGGESTION = "Assign next free ID {} as a new student"
+KEEP_SAVED_STATUS_CHOICE = "Keep saved {}"
+USE_FILE_STATUS_CHOICE = "Use file: {}"
+# FR-31 auto-fixes: why each value was changed.
+FIX_SPACES = "Removed extra spaces."
+FIX_APOSTROPHE = "Replaced a curly apostrophe."
+FIX_CAPITALS = "Standard capitals."
+FIX_STUDENT_ID = "Padded the student ID to 3 digits."
+FIX_DATE = "Changed the date to the stored form YYYY-MM-DD."
+FIX_STATUS = "Changed to the full status word."
+FIX_TYPE = "Changed to the standard type."
 DUPLICATE_SAVED_REASON = "Already saved with the same status."
 DUPLICATE_FILE_REASON = "Repeats row {}."
 
@@ -156,6 +170,19 @@ def is_valid_student_id(student_id):
         return False
 
     return True
+
+
+def pad_student_id(student_id):
+    """Return a 1- or 2-digit ASCII student ID padded to 3 digits ('4' -> '004').
+
+    Anything else is returned unchanged, so '0', '00' and '12A' are still rejected
+    by is_valid_student_id (FR-31).
+    """
+    student_id = student_id.strip()
+    if len(student_id) in (1, 2) and student_id.isascii() and student_id.isdigit():
+        if int(student_id) > 0:
+            return student_id.zfill(3)
+    return student_id
 
 
 def clean_name(name):
@@ -366,10 +393,28 @@ def normalize_session_type(session_type):
     if session_type in ("", "class"):
         return CLASS
 
-    if session_type == "tutorial":
+    if session_type in ("tutorial", "tut"):
         return TUTORIAL
 
     return None
+
+
+def parse_short_date(date_text):
+    """Return a 'D/M/YYYY' date (one or two digits for day and month) as 'YYYY-MM-DD'.
+
+    '7/9/2026' means 7 September 2026 (FR-31 auto-fix). Returns None if it is not
+    in that shape or not a real date.
+    """
+    parts = date_text.strip().split("/")
+    if len(parts) != 3:
+        return None
+
+    day, month, year = parts
+    for part, sizes in [(day, (1, 2)), (month, (1, 2)), (year, (4,))]:
+        if not part.isascii() or not part.isdigit() or len(part) not in sizes:
+            return None
+
+    return parse_date(f"{int(day):02d}/{int(month):02d}/{year}")
 
 
 def is_date_in_period(date_text, start_date, end_date):
