@@ -50,6 +50,9 @@ BLOCK_ID_ERROR = (
 BLOCK_NAME_ERROR = "Invalid block name. Expected 1 to 80 characters."
 BLOCK_START_ERROR = "Invalid block start. A block must start on a Monday; {} is a {}."
 BLOCK_EXISTS_ERROR = "Block {} already exists. Enter a different block ID."
+BLOCK_IN_USE_ERROR = (
+    "Block {} cannot be deleted: it still has {} course(s). Delete those courses first."
+)
 COURSE_OUTSIDE_BLOCK_ERROR = (
     "Invalid course dates. {} is in block {}, which runs {}. "
     "The course dates must stay inside the block."

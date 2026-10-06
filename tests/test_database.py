@@ -185,37 +185,45 @@ class TestDeleteSession(SeedDatabaseTestCase):
 
 class TestDeleteCourse(SeedDatabaseTestCase):
 
-    def test_refused_with_sessions_and_students(self):
-        """FR-23: PY101 has 4 sessions and 10 students, so it cannot be deleted."""
-        self.assertEqual(database.get_course_usage(self.connection, "PY101"), (4, 10))
+    def test_delete_course_counts(self):
+        """FR-23 (Version 3 rule): PY101 is deleted with everything in it; the preview
+        matches. By hand: 4 class days, 0 tutorials, 10 enrollments, and 40 - 2 missing
+        = 38 attendance records."""
+        preview = database.count_delete_course(self.connection, "PY101")
+        counts = database.delete_course(self.connection, "PY101")
 
-        with self.assertRaises(ValueError):
-            database.delete_course(self.connection, "PY101")
-        self.assertTrue(database.course_exists(self.connection, "PY101"))
+        expected = {"class_days": 4, "tutorials": 0, "enrollments": 10, "attendance": 38,
+                    "courses": 1}
+        self.assertEqual(preview, expected)
+        self.assertEqual(counts, expected)
+        self.assertFalse(database.course_exists(self.connection, "PY101"))
+        self.assert_no_orphans()
 
-    def test_refused_with_only_a_student(self):
-        """FR-23: a course with one enrolled student and no sessions is refused."""
-        database.add_course(self.connection, "ML300", "Machine Learning")
-        database.enroll_student(self.connection, "001", "ML300")
+    def test_other_courses_are_untouched(self):
+        """FR-23: deleting PY101 leaves DS102 as it was: 30 Present, 4 Absent, 2 Unknown;
+        the students themselves are kept."""
+        database.delete_course(self.connection, "PY101")
 
-        with self.assertRaises(ValueError):
-            database.delete_course(self.connection, "ML300")
+        totals = self.dashboard_totals()
+        self.assertEqual((totals["present"], totals["absent"], totals["unknown"]), (30, 4, 2))
+        self.assertEqual(self.count("SELECT COUNT(*) FROM students"), 12)
 
-    def test_refused_with_only_a_session(self):
-        """FR-23: a course with one session and no students is refused."""
-        database.add_course(self.connection, "ML300", "Machine Learning")
-        database.add_session(self.connection, "ML300-W1", "ML300", "2026-10-01")
+    def test_course_with_a_tutorial(self):
+        """FR-23: tutorials are counted separately from class days."""
+        database.add_session(self.connection, "PY101-T1", "PY101", "2026-09-19", "Tutorial")
 
-        with self.assertRaises(ValueError):
-            database.delete_course(self.connection, "ML300")
+        counts = database.count_delete_course(self.connection, "PY101")
+
+        self.assertEqual((counts["class_days"], counts["tutorials"]), (4, 1))
 
     def test_empty_course_is_deleted(self):
-        """FR-23: a course with no sessions and no students is deleted."""
+        """FR-23: a course with no sessions and no students is deleted; every other count is 0."""
         database.add_course(self.connection, "ML300", "Machine Learning")
 
         counts = database.delete_course(self.connection, "ML300")
 
-        self.assertEqual(counts, {"courses": 1})
+        self.assertEqual(counts, {"class_days": 0, "tutorials": 0, "enrollments": 0,
+                                  "attendance": 0, "courses": 1})
         self.assertFalse(database.course_exists(self.connection, "ML300"))
         self.assert_no_orphans()
 

@@ -105,6 +105,62 @@ class TestBlocksAndCourses(BlockTestCase):
             database.add_session(self.connection, "PY101-EXTRA", "PY101", "2026-09-07")
 
 
+class TestShorterPeriod(BlockTestCase):
+
+    def test_course_with_a_shorter_period(self):
+        """BR-19, BR-20: DS102 from 14/09 to 25/09 gets 10 class days, only in that period."""
+        class_days = database.create_course(
+            self.connection, "DS102", "Data Science Basics", "B1-2627",
+            "2026-09-14", "2026-09-25",
+        )
+
+        course = database.get_course(self.connection, "DS102")
+        self.assertEqual(class_days, 10)
+        self.assertEqual((course["start_date"], course["end_date"]), ("2026-09-14", "2026-09-25"))
+        self.assertIsNone(database.get_class_session(self.connection, "DS102", "2026-09-11"))
+        self.assertIsNotNone(database.get_class_session(self.connection, "DS102", "2026-09-14"))
+
+    def test_shorter_period_must_stay_inside_block(self):
+        """BR-19: a period that starts before the block is refused and nothing is created."""
+        with self.assertRaises(ValueError) as error:
+            database.create_course(
+                self.connection, "DS102", "Data Science Basics", "B1-2627",
+                "2026-09-01", "2026-09-25",
+            )
+
+        self.assertIn("must stay inside the block", str(error.exception))
+        self.assertFalse(database.course_exists(self.connection, "DS102"))
+
+    def test_shorter_period_end_before_start(self):
+        """BR-19: an end before the start is refused."""
+        with self.assertRaises(ValueError):
+            database.create_course(
+                self.connection, "DS102", "Data Science Basics", "B1-2627",
+                "2026-09-21", "2026-09-14",
+            )
+        self.assertFalse(database.course_exists(self.connection, "DS102"))
+
+
+class TestDeleteBlock(BlockTestCase):
+
+    def test_block_with_courses_is_refused(self):
+        """Section 6.1: block B1-2627 still has PY101, so it cannot be deleted."""
+        with self.assertRaises(ValueError) as error:
+            database.delete_block(self.connection, "B1-2627")
+
+        self.assertIn("1 course(s)", str(error.exception))
+        self.assertIsNotNone(database.get_block(self.connection, "B1-2627"))
+
+    def test_empty_block_is_deleted(self):
+        """Section 6.1: a block with no courses is deleted."""
+        database.add_block(self.connection, "B2-2627", "Block 2, 2026-27", "2026-09-28")
+
+        counts = database.delete_block(self.connection, "B2-2627")
+
+        self.assertEqual(counts, {"blocks": 1})
+        self.assertIsNone(database.get_block(self.connection, "B2-2627"))
+
+
 class TestTutorials(BlockTestCase):
 
     def test_tutorials_are_numbered(self):

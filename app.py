@@ -29,6 +29,8 @@ ALL_STUDENTS = "All students"
 DATE_INPUT_FORMAT = "DD/MM/YYYY"
 NO_COURSES_MESSAGE = "No courses yet. Create a course first."
 NO_BLOCKS_MESSAGE = "No blocks yet. Create a block first."
+# Courses from a database made before Version 3 have no block.
+NO_BLOCK_LABEL = "No block"
 NO_STUDENTS_MESSAGE = "No students yet. Add a student first."
 NO_DATA_MESSAGE = (
     "No sessions with enrolled students yet. Create a course, a session and a student "
@@ -210,8 +212,9 @@ def show_add_block(connection):
 def show_add_course(connection):
     """Show the form to create a course in a block; its class days are generated (FR-03).
 
-    The course takes the block's dates (BR-19). A narrower period can be set afterwards
-    in Edit & Delete > Change course dates.
+    The dates default to the block (BR-19). The "Shorter period" box narrows them
+    inside the block, and class days are generated for that period only (BR-20).
+    The block is chosen outside the form, so the date limits follow it.
     """
     st.subheader("Create a course")
 
@@ -220,10 +223,25 @@ def show_add_course(connection):
         st.info(NO_BLOCKS_MESSAGE)
         return
 
-    with st.form("add_course_form", clear_on_submit=True):
+    block_label = st.selectbox("Block", list(block_choices), key="add_course_block")
+    block_id = block_choices[block_label]
+    block = database.get_block(connection, block_id)
+    block_start = to_date_or_none(block["start_date"])
+    block_end = to_date_or_none(block["end_date"])
+
+    with st.form(f"add_course_form_{block_id}", clear_on_submit=True):
         code_text = st.text_input("Course code", placeholder="PY101")
         name_text = st.text_input("Course name", placeholder="Programming with Python")
-        block_label = st.selectbox("Block", list(block_choices))
+        shorter = st.checkbox("Shorter period (inside the block)")
+        start = st.date_input(
+            "Start date", value=block_start, min_value=block_start, max_value=block_end,
+            format=DATE_INPUT_FORMAT,
+        )
+        end = st.date_input(
+            "End date", value=block_end, min_value=block_start, max_value=block_end,
+            format=DATE_INPUT_FORMAT,
+        )
+        st.caption("Without the box ticked, the course runs for the whole block.")
         submitted = st.form_submit_button("Create course")
 
     if not submitted:
@@ -231,20 +249,85 @@ def show_add_course(connection):
 
     course_code = validation.normalize_course_code(code_text)
     course_name = validation.clean_course_name(name_text)
-    block_id = block_choices[block_label]
+    start_date = None
+    end_date = None
+    if shorter:
+        start_date = to_text_or_none(start)
+        end_date = to_text_or_none(end)
 
     if course_code is None:
         st.error(validation.COURSE_CODE_ERROR)
-    elif course_name is None:
+        return
+    if course_name is None:
         st.error(validation.COURSE_NAME_ERROR)
-    elif database.course_exists(connection, course_code):
+        return
+    if database.course_exists(connection, course_code):
         st.error(validation.COURSE_EXISTS_ERROR.format(course_code))
-    else:
-        class_days = database.create_course(connection, course_code, course_name, block_id)
-        st.success(
-            f"Course {course_code} - {course_name} created in block {block_id}, "
-            f"with {class_days} class days (every weekday)."
+        return
+
+    try:
+        class_days = database.create_course(
+            connection, course_code, course_name, block_id, start_date, end_date
         )
+    except ValueError as error:
+        st.error(str(error))
+        return
+
+    course = database.get_course(connection, course_code)
+    period = validation.describe_course_period(course["start_date"], course["end_date"])
+    finish_edit(
+        f"Course {course_code} - {course_name} created in block {block_id}, running "
+        f"{period}, with {class_days} class days (every weekday)."
+    )
+
+
+def show_block_list(connection):
+    """List every block with its period and its courses (Section 6.1)."""
+    st.subheader("Blocks")
+
+    rows = []
+    for block in database.get_blocks(connection):
+        codes = []
+        for course in database.get_block_courses(connection, block["block_id"]):
+            codes.append(course["course_code"])
+        courses_text = ", ".join(codes)
+        if not codes:
+            courses_text = "No courses yet"
+        rows.append({
+            "Block": block["block_id"],
+            "Name": block["block_name"],
+            "Start date": validation.format_date(block["start_date"]),
+            "End date": validation.format_date(block["end_date"]),
+            "Courses": courses_text,
+        })
+
+    if not rows:
+        st.info(NO_BLOCKS_MESSAGE)
+        return
+    st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
+
+
+def show_delete_block(connection):
+    """Delete a block, only when it has no courses (Section 6.1)."""
+    st.subheader("Delete a block")
+
+    block_choices = get_block_choices(connection)
+    if not block_choices:
+        st.info(NO_BLOCKS_MESSAGE)
+        return
+
+    block_label = st.selectbox("Block", list(block_choices), key="delete_block")
+    block_id = block_choices[block_label]
+    course_count = len(database.get_block_courses(connection, block_id))
+
+    if course_count > 0:
+        st.error(validation.BLOCK_IN_USE_ERROR.format(block_id, course_count))
+        return
+
+    st.warning(f"This will remove 1 block: {block_label}. It has no courses.")
+    if ask_to_confirm(f"block_{block_id}"):
+        counts = database.delete_block(connection, block_id)
+        finish_edit(f"Deleted block {block_id}: removed {describe_counts(counts)}.")
 
 
 def show_course_list(connection):
@@ -316,268 +399,15 @@ def show_add_student(connection):
         return
 
     database.add_student(connection, student_id, full_name)
-    st.success(f"Student {student_id} - {full_name} added. Enroll them in a course below.")
-
-
-# ---------- FR-05: enroll a student in a course ----------
-
-def show_enroll_student(connection):
-    """Enroll a student in a course for the full course period (FR-05).
-
-    The enrollment dates are stored as NULL, so they follow the course (BR-17).
-    A late start or early leave is set afterwards in Edit & Delete.
-    """
-    st.subheader("Enroll a student in a course")
-
-    student_choices = get_student_choices(connection)
-    course_choices = get_course_choices(connection)
-
-    if not student_choices:
-        st.info(NO_STUDENTS_MESSAGE)
-        return
-
-    if not course_choices:
-        st.info(NO_COURSES_MESSAGE)
-        return
-
-    student_label = st.selectbox("Student", list(student_choices), key="enroll_student")
-    course_label = st.selectbox("Course", list(course_choices), key="enroll_course")
-    student_id = student_choices[student_label]
-    course_code = course_choices[course_label]
-    course = database.get_course(connection, course_code)
-
-    if not st.button("Enroll", key="enroll_button"):
-        return
-
-    if database.is_enrolled(connection, student_id, course_code):
-        st.error(validation.ALREADY_ENROLLED_ERROR.format(student_id, course_code))
-        return
-
-    database.enroll_student(connection, student_id, course_code)
-    period = format_course_period(course["start_date"], course["end_date"])
-    st.success(
-        f"{student_id} enrolled in {course_code} for the full course period ({period})."
+    # Open the new student's profile above, where they can be enrolled.
+    st.session_state["open_profile"] = f"{student_id} - {full_name}"
+    finish_edit(
+        f"Student {student_id} - {full_name} added. Enroll them in a course in their "
+        "profile above."
     )
 
 
-# ---------- FR-06: create a session ----------
-
-def show_add_tutorial(connection):
-    """Show the form to add a tutorial on any date inside the course period (BR-21).
-
-    Class days are generated with the course (BR-20), so only tutorials are added here.
-    """
-    st.subheader("Add a tutorial")
-
-    course_choices = get_course_choices(connection)
-    if not course_choices:
-        st.info(NO_COURSES_MESSAGE)
-        return
-
-    with st.form("add_tutorial_form", clear_on_submit=True):
-        course_label = st.selectbox("Course", list(course_choices))
-        chosen_date = st.date_input("Tutorial date", value=None, format=DATE_INPUT_FORMAT)
-        st.caption("Any date inside the course period, weekends included. "
-                   "Several tutorials on one date are numbered T1, T2...")
-        submitted = st.form_submit_button("Add tutorial")
-
-    if not submitted:
-        return
-
-    course_code = course_choices[course_label]
-    tutorial_date = to_text_or_none(chosen_date)
-    if tutorial_date is None:
-        st.error(validation.DATE_ERROR)
-        return
-
-    try:
-        session_id = database.add_tutorial(connection, course_code, tutorial_date)
-    except ValueError as error:
-        st.error(str(error))
-        return
-
-    session = database.get_session(connection, session_id)
-    st.success(f"Tutorial added to {course_code}: {describe_session(session)}.")
-
-
-def show_session_list(connection):
-    """List a course's class days and tutorials in date order (BR-20, BR-21, BR-23)."""
-    st.subheader("Class days and tutorials")
-
-    course_choices = get_course_choices(connection)
-    if not course_choices:
-        st.info(NO_COURSES_MESSAGE)
-        return
-
-    course_label = st.selectbox("Course", list(course_choices), key="session_list_course")
-    course_code = course_choices[course_label]
-
-    rows = []
-    for session in database.get_sessions_for_course(connection, course_code):
-        rows.append({
-            "Date": validation.format_date(session["session_date"]),
-            "Day": validation.weekday_name(session["session_date"]),
-            "Type": session["session_type"],
-            "Session ID": session["session_id"],
-        })
-
-    if not rows:
-        st.info(f"{course_code} has no class days or tutorials.")
-        return
-
-    class_days = 0
-    for row in rows:
-        if row["Type"] == validation.CLASS:
-            class_days += 1
-    st.caption(f"{class_days} class days and {len(rows) - class_days} tutorials.")
-    st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
-
-
-# ---------- FR-07 and FR-08: record and correct attendance ----------
-
-def build_attendance_table(connection, session_id):
-    """Return a DataFrame of enrolled students and their saved status (empty if none)."""
-    rows = []
-    for record in database.get_session_attendance(connection, session_id):
-        rows.append({
-            "student_id": record["student_id"],
-            "full_name": record["full_name"],
-            "status": record["status"],
-        })
-    return pd.DataFrame(rows, columns=["student_id", "full_name", "status"])
-
-
-def save_attendance_table(connection, session_id, table):
-    """Save every chosen status and return counts of what happened."""
-    counts = {
-        "inserted": 0, "updated": 0, "unchanged": 0, "not_enrolled": 0,
-        "outside_enrollment": 0, "blank": 0, "cleared": 0,
-    }
-
-    for index, row in table.iterrows():
-        status = row["status"]
-
-        # A blank status saves nothing. Clearing a cell does not delete, so if the
-        # student already had a saved status, that status is kept.
-        if status not in STATUS_OPTIONS:
-            saved_status = database.get_status(connection, row["student_id"], session_id)
-            if saved_status is None:
-                counts["blank"] += 1
-            else:
-                counts["cleared"] += 1
-            continue
-
-        result = database.record_attendance(connection, row["student_id"], session_id, status)
-        counts[result] += 1
-
-    return counts
-
-
-def show_save_result(counts):
-    """Show a summary of what was saved."""
-    saved = counts["inserted"] + counts["updated"]
-    st.success(
-        f"Saved {saved} record(s): {counts['inserted']} new, {counts['updated']} changed. "
-        f"{counts['unchanged']} unchanged record(s) were not rewritten."
-    )
-
-    if counts["blank"] > 0:
-        st.info(f"{counts['blank']} student(s) left blank. They stay Unknown.")
-
-    if counts["cleared"] > 0:
-        st.warning(
-            f"{counts['cleared']} saved status(es) were cleared on screen but kept. "
-            "To delete a record, use Manage Attendance > Edit & Delete."
-        )
-
-    if counts["outside_enrollment"] > 0:
-        st.error(
-            f"{counts['outside_enrollment']} student(s) were not saved: this session's date is "
-            "outside their enrollment dates. Change them in Edit & Delete > "
-            "Late start or early leave first."
-        )
-
-    if counts["not_enrolled"] > 0:
-        st.error(
-            f"{counts['not_enrolled']} student(s) are not enrolled in this course and were "
-            "not saved. Enroll them first."
-        )
-
-
-def show_record_attendance(connection):
-    """Show the editable attendance list for one session (FR-07, FR-08)."""
-    st.subheader("Record or correct attendance")
-
-    course_choices = get_course_choices(connection)
-    if not course_choices:
-        st.info(NO_COURSES_MESSAGE)
-        return
-
-    course_label = st.selectbox("Course", list(course_choices), key="record_course")
-    course_code = course_choices[course_label]
-
-    session_choices = get_session_choices(connection, course_code)
-    if not session_choices:
-        st.info(f"No sessions for {course_code} yet. Create a session first.")
-        return
-
-    session_label = st.selectbox("Session", list(session_choices), key="record_session")
-    session_id = session_choices[session_label]
-
-    table = build_attendance_table(connection, session_id)
-    if table.empty:
-        st.info(
-            f"No students are expected at {session_id}: nobody is enrolled in {course_code} "
-            "on that date. Add or enroll a student, or check their enrollment dates."
-        )
-        return
-
-    st.caption(
-        "Choose Present, Late, Excused or Absent for each student. "
-        "A blank status means Unknown."
-    )
-
-    with st.form("record_form"):
-        edited_table = st.data_editor(
-            table,
-            key=f"editor_{session_id}",
-            hide_index=True,
-            width="stretch",
-            disabled=["student_id", "full_name"],
-            column_config={
-                "student_id": st.column_config.TextColumn("Student ID"),
-                "full_name": st.column_config.TextColumn("Full name"),
-                "status": st.column_config.SelectboxColumn(
-                    "Status", options=STATUS_OPTIONS, required=False
-                ),
-            },
-        )
-        submitted = st.form_submit_button("Save attendance")
-
-    if submitted:
-        counts = save_attendance_table(connection, session_id, edited_table)
-        show_save_result(counts)
-
-    # Shown after saving, so the numbers include what was just saved.
-    show_session_counts(connection, session_id)
-
-
-def show_session_counts(connection, session_id):
-    """Show the five status counts and the rates for one session."""
-    frame = analytics.build_records_frame(database.get_expected_records(connection))
-    session_frame = frame[frame["session_id"] == session_id]
-    rates = analytics.summarize_frame(session_frame)
-
-    st.caption(
-        f"{session_id}: {rates['present']} Present, {rates['late']} Late, "
-        f"{rates['excused']} Excused, {rates['absent']} Absent, "
-        f"{rates['unknown']} Unknown. "
-        f"Attendance rate {analytics.format_rate(rates['attendance_rate'])}, "
-        f"completeness {analytics.format_rate(rates['completeness'])}."
-    )
-
-
-# ---------- FR-22 and FR-23: rename and delete ----------
+# ---------- Shared: messages, confirmation and the Block -> Course picker ----------
 
 def finish_edit(message):
     """Remember a success message and rerun, so every list on the page is up to date."""
@@ -586,7 +416,7 @@ def finish_edit(message):
 
 
 def show_edit_message():
-    """Show the message of the last rename or delete once, then forget it."""
+    """Show the message of the last change or delete once, then forget it."""
     message = st.session_state.pop("edit_message", None)
     if message is not None:
         st.success(message)
@@ -608,7 +438,10 @@ def describe_counts(counts):
         "enrollments": "enrollment(s)",
         "students": "student(s)",
         "sessions": "session(s)",
+        "class_days": "class day(s)",
+        "tutorials": "tutorial(s)",
         "courses": "course(s)",
+        "blocks": "block(s)",
     }
     parts = []
     for key in counts:
@@ -616,69 +449,71 @@ def describe_counts(counts):
     return ", ".join(parts)
 
 
-def show_rename_student(connection):
-    """Change a student's name with the same rules as Add Student (FR-22)."""
-    st.subheader("Rename a student")
+def choose_course(connection, key_prefix):
+    """Show a Block box, then a Course box limited to that block; return the course code.
 
-    student_choices = get_student_choices(connection)
-    if not student_choices:
-        st.info(NO_STUDENTS_MESSAGE)
-        return
+    Courses from an older database have no block; they are listed under "No block".
+    Returns None (after an info message) when there is nothing to choose.
+    """
+    block_choices = get_block_choices(connection)
 
-    student_label = st.selectbox("Student", list(student_choices), key="rename_student")
-    student_id = student_choices[student_label]
-    current_name = database.get_student(connection, student_id)["full_name"]
+    has_old_courses = False
+    for course in database.get_courses(connection):
+        if course["block_id"] is None:
+            has_old_courses = True
+    if has_old_courses:
+        block_choices[NO_BLOCK_LABEL] = None
 
-    with st.form("rename_student_form"):
-        name_text = st.text_input(
-            "New full name", value=current_name, key=f"rename_student_name_{student_id}"
-        )
-        confirm_same_name = st.checkbox("I confirm this is a different student with the same name")
-        submitted = st.form_submit_button("Rename student")
+    if not block_choices:
+        st.info(NO_BLOCKS_MESSAGE)
+        return None
 
-    if not submitted:
-        return
+    block_label = st.selectbox("Block", list(block_choices), key=f"{key_prefix}_block")
+    block_id = block_choices[block_label]
 
-    new_name = validation.clean_name(name_text)
-    if not validation.is_valid_name(new_name):
-        st.error(validation.NAME_ERROR)
-        return
+    course_choices = {}
+    for course in database.get_courses(connection):
+        if course["block_id"] == block_id:
+            course_choices[make_course_label(course)] = course["course_code"]
 
-    if new_name == current_name:
-        st.info(validation.NO_CHANGE_MESSAGE.format("name"))
-        return
-
-    # Same-name warning as Add Student, ignoring the student's own current name.
-    other_students = []
-    for student in database.find_students_by_name(connection, new_name):
-        if student["student_id"] != student_id:
-            other_students.append(student)
-
-    if other_students and not confirm_same_name:
-        first_match = other_students[0]
-        st.warning(validation.DUPLICATE_NAME_WARNING.format(
-            first_match["full_name"], first_match["student_id"]
-        ))
-        return
-
-    database.rename_student(connection, student_id, new_name)
-    finish_edit(f"Student {student_id} renamed from {current_name} to {new_name}.")
-
-
-def show_rename_course(connection):
-    """Change a course's name. The course code stays the same (FR-22)."""
-    st.subheader("Rename a course")
-
-    course_choices = get_course_choices(connection)
     if not course_choices:
-        st.info(NO_COURSES_MESSAGE)
-        return
+        st.info("This block has no courses yet. Create a course first.")
+        return None
 
-    course_label = st.selectbox("Course", list(course_choices), key="rename_course")
-    course_code = course_choices[course_label]
+    # The key includes the block, so the Course box starts again when the block changes.
+    course_label = st.selectbox(
+        "Course", list(course_choices), key=f"{key_prefix}_course_{block_id}"
+    )
+    return course_choices[course_label]
+
+
+# ---------- Blocks & Courses: one course (FR-22, FR-23, FR-25) ----------
+
+def show_course_enrollments(connection, course_code):
+    """List the students enrolled in a course, with their enrollment period (BR-15)."""
+    course = database.get_course(connection, course_code)
+    rows = []
+    for enrollment in database.get_course_enrollments(connection, course_code):
+        rows.append({
+            "Student ID": enrollment["student_id"],
+            "Full name": enrollment["full_name"],
+            "Enrolled": describe_current_enrollment(
+                enrollment["start_date"], enrollment["end_date"], course
+            ).replace("Current: ", ""),
+        })
+
+    if not rows:
+        st.info(f"No students are enrolled in {course_code} yet. Enroll them in Students.")
+        return
+    st.caption(f"{len(rows)} student(s) enrolled.")
+    st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
+
+
+def show_rename_course(connection, course_code):
+    """Change a course's name. The course code stays the same (FR-22)."""
     current_name = database.get_course_name(connection, course_code)
 
-    with st.form("rename_course_form"):
+    with st.form(f"rename_course_form_{course_code}"):
         name_text = st.text_input(
             "New course name", value=current_name, key=f"rename_course_name_{course_code}"
         )
@@ -697,21 +532,12 @@ def show_rename_course(connection):
         finish_edit(f"Course {course_code} renamed from {current_name} to {new_name}.")
 
 
-def show_change_course_dates(connection):
+def show_change_course_dates(connection, course_code):
     """Change a course's start and end dates and regenerate its class days (FR-25, BR-20).
 
     A course in a block must stay inside the block (BR-19). Refused, with counts, when
     saved records would be lost or an enrollment would fall outside the new period.
     """
-    st.subheader("Change course dates")
-
-    course_choices = get_course_choices(connection)
-    if not course_choices:
-        st.info(NO_COURSES_MESSAGE)
-        return
-
-    course_label = st.selectbox("Course", list(course_choices), key="course_dates_course")
-    course_code = course_choices[course_label]
     course = database.get_course(connection, course_code)
     current_start = course["start_date"]
     current_end = course["end_date"]
@@ -757,8 +583,45 @@ def show_change_course_dates(connection):
     )
 
 
+def show_delete_course(connection, course_code):
+    """Delete a course with its class days, tutorials, enrollments and records (FR-23).
+
+    Version 3 rule (Section 11): show the counts first; delete only after the tick.
+    """
+    counts = database.count_delete_course(connection, course_code)
+
+    st.warning(
+        f"This will remove {describe_counts(counts)}: {course_code} and everything in it."
+    )
+    if ask_to_confirm(f"course_{course_code}"):
+        counts = database.delete_course(connection, course_code)
+        finish_edit(f"Deleted course {course_code}: removed {describe_counts(counts)}.")
+
+
+def show_course_details(connection):
+    """Pick a course, then see its students and rename, re-date or delete it."""
+    st.subheader("Course details")
+
+    course_code = choose_course(connection, "manage")
+    if course_code is None:
+        return
+
+    show_course_enrollments(connection, course_code)
+
+    with st.expander("Rename the course"):
+        show_rename_course(connection, course_code)
+
+    with st.expander("Change course dates (class days are regenerated)"):
+        show_change_course_dates(connection, course_code)
+
+    with st.expander("Delete the course"):
+        show_delete_course(connection, course_code)
+
+
+# ---------- Students: the student profile (FR-04, FR-05, FR-22 to FR-24) ----------
+
 def describe_current_enrollment(start_date, end_date, course):
-    """Return text like 'Current: 2026-09-20 to 2026-12-18 (joined late)'.
+    """Return text like 'Current: 20/09/2026 to 25/09/2026 (joined late)'.
 
     A date that is not set follows the course, so the course's date is shown instead.
     """
@@ -786,31 +649,98 @@ def describe_current_enrollment(start_date, end_date, course):
     return f"Current: {format_course_period(shown_start, shown_end)} ({note})"
 
 
-def show_change_enrollment_dates(connection):
-    """Change the start and end dates of one enrollment (FR-24).
+def get_student_course_choices(connection, student_id):
+    """Return a dict that maps the full label of each of the student's courses to its code."""
+    choices = {}
+    for course in database.get_student_courses(connection, student_id):
+        choices[make_course_label(course)] = course["course_code"]
+    return choices
+
+
+def show_enroll_student(connection, student_id):
+    """Enroll the student in a course for the full course period (FR-05).
+
+    The enrollment dates are stored as NULL, so they follow the course (BR-17).
+    A late start or early leave is set afterwards, just below.
+    """
+    course_choices = get_course_choices(connection)
+    if not course_choices:
+        st.info(NO_COURSES_MESSAGE)
+        return
+
+    course_label = st.selectbox(
+        "Course", list(course_choices), key=f"enroll_course_{student_id}"
+    )
+    course_code = course_choices[course_label]
+    course = database.get_course(connection, course_code)
+
+    if not st.button("Enroll", key=f"enroll_button_{student_id}"):
+        return
+
+    if database.is_enrolled(connection, student_id, course_code):
+        st.error(validation.ALREADY_ENROLLED_ERROR.format(student_id, course_code))
+        return
+
+    database.enroll_student(connection, student_id, course_code)
+    period = format_course_period(course["start_date"], course["end_date"])
+    finish_edit(
+        f"{student_id} enrolled in {course_code} for the full course period ({period})."
+    )
+
+
+def show_rename_student(connection, student_id):
+    """Change the student's name with the same rules as Add Student (FR-22)."""
+    current_name = database.get_student(connection, student_id)["full_name"]
+
+    with st.form(f"rename_student_form_{student_id}"):
+        name_text = st.text_input(
+            "New full name", value=current_name, key=f"rename_student_name_{student_id}"
+        )
+        confirm_same_name = st.checkbox("I confirm this is a different student with the same name")
+        submitted = st.form_submit_button("Rename student")
+
+    if not submitted:
+        return
+
+    new_name = validation.clean_name(name_text)
+    if not validation.is_valid_name(new_name):
+        st.error(validation.NAME_ERROR)
+        return
+
+    if new_name == current_name:
+        st.info(validation.NO_CHANGE_MESSAGE.format("name"))
+        return
+
+    # Same-name warning as Add Student, ignoring the student's own current name.
+    other_students = []
+    for student in database.find_students_by_name(connection, new_name):
+        if student["student_id"] != student_id:
+            other_students.append(student)
+
+    if other_students and not confirm_same_name:
+        first_match = other_students[0]
+        st.warning(validation.DUPLICATE_NAME_WARNING.format(
+            first_match["full_name"], first_match["student_id"]
+        ))
+        return
+
+    database.rename_student(connection, student_id, new_name)
+    finish_edit(f"Student {student_id} renamed from {current_name} to {new_name}.")
+
+
+def show_change_enrollment_dates(connection, student_id):
+    """Change the start and end dates of one of the student's enrollments (FR-24).
 
     Refused when saved attendance would fall outside the new dates.
     """
-    st.subheader("Late start or early leave")
-
-    student_choices = get_student_choices(connection)
-    if not student_choices:
-        st.info(NO_STUDENTS_MESSAGE)
-        return
-
-    student_label = st.selectbox("Student", list(student_choices), key="dates_student")
-    student_id = student_choices[student_label]
-
-    # Only the courses this student is enrolled in, with the full course label.
-    course_choices = {}
-    for course in database.get_student_courses(connection, student_id):
-        course_choices[make_course_label(course)] = course["course_code"]
-
+    course_choices = get_student_course_choices(connection, student_id)
     if not course_choices:
-        st.info(f"{student_label} is not enrolled in any course.")
+        st.info("This student is not enrolled in any course.")
         return
 
-    course_label = st.selectbox("Course", list(course_choices), key="dates_course")
+    course_label = st.selectbox(
+        "Course", list(course_choices), key=f"dates_course_{student_id}"
+    )
     course_code = course_choices[course_label]
     course = database.get_course(connection, course_code)
     enrollment = database.get_enrollment(connection, student_id, course_code)
@@ -871,73 +801,21 @@ def to_date(date_text):
     return date.fromisoformat(date_text)
 
 
-def show_delete_attendance_record(connection):
-    """Delete one saved attendance record; the student becomes Unknown (FR-23)."""
-    st.subheader("Delete one attendance record")
-
-    course_choices = get_course_choices(connection)
+def show_unenroll_student(connection, student_id):
+    """Un-enroll the student from one course, with their records for it (FR-23)."""
+    course_choices = get_student_course_choices(connection, student_id)
     if not course_choices:
-        st.info(NO_COURSES_MESSAGE)
+        st.info("This student is not enrolled in any course.")
         return
 
-    course_label = st.selectbox("Course", list(course_choices), key="delete_record_course")
-    session_choices = get_session_choices(connection, course_choices[course_label])
-    if not session_choices:
-        st.info("This course has no sessions.")
-        return
-
-    session_label = st.selectbox("Session", list(session_choices), key="delete_record_session")
-    session_id = session_choices[session_label]
-
-    # Only students with a saved record can have it deleted.
-    record_choices = {}
-    for record in database.get_session_attendance(connection, session_id):
-        if record["status"] is not None:
-            label = f"{record['student_id']} - {record['full_name']} ({record['status']})"
-            record_choices[label] = record["student_id"]
-
-    if not record_choices:
-        st.info("No saved attendance records in this session.")
-        return
-
-    record_label = st.selectbox("Student", list(record_choices), key="delete_record_student")
-    student_id = record_choices[record_label]
-
-    st.warning(
-        f"This will remove 1 attendance record: {record_label} in {session_id}. "
-        "The student becomes Unknown for that session."
+    course_label = st.selectbox(
+        "Course", list(course_choices), key=f"unenroll_course_{student_id}"
     )
-    if ask_to_confirm(f"record_{session_id}_{student_id}"):
-        counts = database.delete_attendance_record(connection, student_id, session_id)
-        finish_edit(f"Deleted {describe_counts(counts)} for {student_id} in {session_id}.")
-
-
-def show_unenroll_student(connection):
-    """Un-enroll a student from one course, with their records for it (FR-23)."""
-    st.subheader("Un-enroll a student from a course")
-
-    student_choices = get_student_choices(connection)
-    if not student_choices:
-        st.info(NO_STUDENTS_MESSAGE)
-        return
-
-    student_label = st.selectbox("Student", list(student_choices), key="unenroll_student")
-    student_id = student_choices[student_label]
-
-    course_choices = {}
-    for course in database.get_student_courses(connection, student_id):
-        course_choices[make_course_label(course)] = course["course_code"]
-
-    if not course_choices:
-        st.info(f"{student_label} is not enrolled in any course.")
-        return
-
-    course_label = st.selectbox("Course", list(course_choices), key="unenroll_course")
     course_code = course_choices[course_label]
     counts = database.count_unenroll(connection, student_id, course_code)
 
     st.warning(
-        f"This will remove {describe_counts(counts)}: {student_label} leaves {course_code} "
+        f"This will remove {describe_counts(counts)}: {student_id} leaves {course_code} "
         f"and their records for {course_code} sessions are deleted."
     )
     if ask_to_confirm(f"unenroll_{student_id}_{course_code}"):
@@ -947,17 +825,8 @@ def show_unenroll_student(connection):
         )
 
 
-def show_delete_student(connection):
-    """Delete a student with all their enrollments and records (FR-23)."""
-    st.subheader("Delete a student")
-
-    student_choices = get_student_choices(connection)
-    if not student_choices:
-        st.info(NO_STUDENTS_MESSAGE)
-        return
-
-    student_label = st.selectbox("Student", list(student_choices), key="delete_student")
-    student_id = student_choices[student_label]
+def show_delete_student(connection, student_id, student_label):
+    """Delete the student with all their enrollments and records (FR-23)."""
     counts = database.count_delete_student(connection, student_id)
 
     st.warning(
@@ -965,78 +834,393 @@ def show_delete_student(connection):
         "recorded for them. The ID can be used again afterwards."
     )
     if ask_to_confirm(f"student_{student_id}"):
+        # The profile box would point to a student who no longer exists.
+        if "profile_student" in st.session_state:
+            del st.session_state["profile_student"]
         counts = database.delete_student(connection, student_id)
         finish_edit(f"Deleted student {student_label}: removed {describe_counts(counts)}.")
 
 
-def show_delete_session(connection):
-    """Delete a session and its attendance records (FR-23)."""
-    st.subheader("Delete a session")
+def show_profile_table(connection, student_id):
+    """Show the student's courses with period, counts, rate, completeness and deductions."""
+    records = analytics.build_records_frame(database.get_expected_records(connection))
+    student_records = analytics.filter_student(records, student_id)
 
-    course_choices = get_course_choices(connection)
-    if not course_choices:
-        st.info(NO_COURSES_MESSAGE)
+    if student_records.empty:
+        course_codes = join_course_codes(connection, student_id)
+        if course_codes == "Not enrolled":
+            st.info("Not enrolled in any course yet. Enroll the student below.")
+        else:
+            st.info(f"Enrolled in {course_codes}, but no sessions are expected yet.")
         return
 
-    course_label = st.selectbox("Course", list(course_choices), key="delete_session_course")
-    session_choices = get_session_choices(connection, course_choices[course_label])
+    profile = analytics.format_summary_table(analytics.build_student_profile(student_records))
+    profile = analytics.format_date_columns(profile)
+    columns = [
+        "Course", analytics.ENROLLED_FROM_COLUMN, analytics.ENROLLED_UNTIL_COLUMN,
+        "Present", "Late", "Excused", "Absent", "Unknown", "Attendance rate",
+        "Completeness", analytics.DEDUCTED_COLUMN,
+    ]
+    st.dataframe(profile[columns], hide_index=True, width="stretch")
+
+
+def show_student_profile(connection):
+    """Show one student's profile and every change for that student (Section 6.1)."""
+    st.subheader("Student profile")
+
+    student_choices = get_student_choices(connection)
+    if not student_choices:
+        st.info(NO_STUDENTS_MESSAGE)
+        return
+
+    # A search or a new student asks to open a profile; the box must be set before it is drawn.
+    requested = st.session_state.pop("open_profile", None)
+    if requested in student_choices:
+        st.session_state["profile_student"] = requested
+
+    student_label = st.selectbox("Student", list(student_choices), key="profile_student")
+    student_id = student_choices[student_label]
+
+    show_profile_table(connection, student_id)
+
+    with st.expander("Enroll in a course"):
+        show_enroll_student(connection, student_id)
+
+    with st.expander("Late start or early leave"):
+        show_change_enrollment_dates(connection, student_id)
+
+    with st.expander("Rename"):
+        show_rename_student(connection, student_id)
+
+    with st.expander("Un-enroll from a course"):
+        show_unenroll_student(connection, student_id)
+
+    with st.expander("Delete the student"):
+        show_delete_student(connection, student_id, student_label)
+
+
+# ---------- Class days & Tutorials (BR-20, BR-21) ----------
+
+def show_session_list(connection, course_code):
+    """List a course's class days and tutorials in date order (BR-20, BR-21, BR-23)."""
+    rows = []
+    for session in database.get_sessions_for_course(connection, course_code):
+        rows.append({
+            "Date": validation.format_date(session["session_date"]),
+            "Day": validation.weekday_name(session["session_date"]),
+            "Type": session["session_type"],
+            "Session ID": session["session_id"],
+        })
+
+    if not rows:
+        st.info(f"{course_code} has no class days or tutorials.")
+        return
+
+    class_days = 0
+    for row in rows:
+        if row["Type"] == validation.CLASS:
+            class_days += 1
+    st.caption(f"{class_days} class days and {len(rows) - class_days} tutorials.")
+    st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
+
+
+def show_add_tutorial(connection, course_code):
+    """Show the form to add a tutorial on any date inside the course period (BR-21)."""
+    with st.form(f"add_tutorial_form_{course_code}", clear_on_submit=True):
+        chosen_date = st.date_input("Tutorial date", value=None, format=DATE_INPUT_FORMAT)
+        st.caption("Any date inside the course period, weekends included. "
+                   "Several tutorials on one date are numbered T1, T2...")
+        submitted = st.form_submit_button("Add tutorial")
+
+    if not submitted:
+        return
+
+    tutorial_date = to_text_or_none(chosen_date)
+    if tutorial_date is None:
+        st.error(validation.DATE_ERROR)
+        return
+
+    try:
+        session_id = database.add_tutorial(connection, course_code, tutorial_date)
+    except ValueError as error:
+        st.error(str(error))
+        return
+
+    session = database.get_session(connection, session_id)
+    finish_edit(f"Tutorial added to {course_code}: {describe_session(session)}.")
+
+
+def show_remove_session(connection, course_code):
+    """Remove a class day (for example a holiday) or a tutorial, with its records (BR-20)."""
+    session_choices = get_session_choices(connection, course_code)
     if not session_choices:
-        st.info("This course has no sessions.")
+        st.info(f"{course_code} has no class days or tutorials.")
         return
 
-    session_label = st.selectbox("Session", list(session_choices), key="delete_session")
+    session_label = st.selectbox(
+        "Class day or tutorial", list(session_choices), key=f"remove_session_{course_code}"
+    )
     session_id = session_choices[session_label]
     counts = database.count_delete_session(connection, session_id)
 
-    st.warning(f"This will remove {describe_counts(counts)}: {session_label} and its records.")
+    st.warning(
+        f"This will remove {session_label} and delete "
+        f"{counts['attendance']} attendance record(s) saved for it."
+    )
     if ask_to_confirm(f"session_{session_id}"):
         counts = database.delete_session(connection, session_id)
-        finish_edit(f"Deleted session {session_id}: removed {describe_counts(counts)}.")
+        finish_edit(f"Removed {session_label} from {course_code}: "
+                    f"{describe_counts(counts)} deleted.")
 
 
-def show_delete_course(connection):
-    """Delete a course, only when no sessions or students use it (FR-23)."""
-    st.subheader("Delete a course")
+def show_class_days_tab(connection):
+    """Pick a course; list, add and remove its class days and tutorials (Section 6.1)."""
+    st.subheader("Class days & Tutorials")
 
-    course_choices = get_course_choices(connection)
-    if not course_choices:
-        st.info(NO_COURSES_MESSAGE)
+    course_code = choose_course(connection, "days")
+    if course_code is None:
         return
 
-    course_label = st.selectbox("Course", list(course_choices), key="delete_course")
-    course_code = course_choices[course_label]
-    session_count, student_count = database.get_course_usage(connection, course_code)
+    show_session_list(connection, course_code)
 
-    if session_count > 0 or student_count > 0:
-        st.error(validation.COURSE_IN_USE_ERROR.format(course_code, session_count, student_count))
+    with st.expander("Add a tutorial"):
+        show_add_tutorial(connection, course_code)
+
+    with st.expander("Remove a class day (holiday) or a tutorial"):
+        show_remove_session(connection, course_code)
+
+
+# ---------- Record attendance (FR-07, FR-08) ----------
+
+def build_attendance_table(connection, session_id):
+    """Return a DataFrame of enrolled students and their saved status (empty if none)."""
+    rows = []
+    for record in database.get_session_attendance(connection, session_id):
+        rows.append({
+            "student_id": record["student_id"],
+            "full_name": record["full_name"],
+            "status": record["status"],
+        })
+    return pd.DataFrame(rows, columns=["student_id", "full_name", "status"])
+
+
+def mark_blank_as_present(table):
+    """Return a copy of the table where every student with no status is Present.
+
+    Students who already have a saved status keep it, so a saved Absent is never
+    overwritten by "Mark all Present".
+    """
+    marked = table.copy()
+    new_statuses = []
+    for status in marked["status"]:
+        if status in STATUS_OPTIONS:
+            new_statuses.append(status)
+        else:
+            new_statuses.append("Present")
+    marked["status"] = new_statuses
+    return marked
+
+
+def save_attendance_table(connection, session_id, table):
+    """Save every chosen status and return counts of what happened."""
+    counts = {
+        "inserted": 0, "updated": 0, "unchanged": 0, "not_enrolled": 0,
+        "outside_enrollment": 0, "blank": 0, "cleared": 0,
+    }
+
+    for index, row in table.iterrows():
+        status = row["status"]
+
+        # A blank status saves nothing. Clearing a cell does not delete, so if the
+        # student already had a saved status, that status is kept.
+        if status not in STATUS_OPTIONS:
+            saved_status = database.get_status(connection, row["student_id"], session_id)
+            if saved_status is None:
+                counts["blank"] += 1
+            else:
+                counts["cleared"] += 1
+            continue
+
+        result = database.record_attendance(connection, row["student_id"], session_id, status)
+        counts[result] += 1
+
+    return counts
+
+
+def show_save_result(counts):
+    """Show a summary of what was saved."""
+    saved = counts["inserted"] + counts["updated"]
+    st.success(
+        f"Saved {saved} record(s): {counts['inserted']} new, {counts['updated']} changed. "
+        f"{counts['unchanged']} unchanged record(s) were not rewritten."
+    )
+
+    if counts["blank"] > 0:
+        st.info(f"{counts['blank']} student(s) left blank. They stay Unknown.")
+
+    if counts["cleared"] > 0:
+        st.warning(
+            f"{counts['cleared']} saved status(es) were cleared on screen but kept. "
+            "To delete a record, use \"Delete one attendance record\" below."
+        )
+
+    if counts["outside_enrollment"] > 0:
+        st.error(
+            f"{counts['outside_enrollment']} student(s) were not saved: this session's date is "
+            "outside their enrollment dates. Change them in Students > student profile > "
+            "Late start or early leave first."
+        )
+
+    if counts["not_enrolled"] > 0:
+        st.error(
+            f"{counts['not_enrolled']} student(s) are not enrolled in this course and were "
+            "not saved. Enroll them first."
+        )
+
+
+def choose_session(connection, course_code):
+    """Show the day box for a course, starting on today if today is a class day."""
+    sessions = database.get_sessions_for_course(connection, course_code)
+    if not sessions:
+        st.info(f"{course_code} has no class days or tutorials.")
+        return None
+
+    labels = []
+    session_ids = []
+    default_index = 0
+    today = date.today().isoformat()
+    for index, session in enumerate(sessions):
+        labels.append(describe_session(session))
+        session_ids.append(session["session_id"])
+        if session["session_date"] == today and session["session_type"] == validation.CLASS:
+            default_index = index
+
+    label = st.selectbox(
+        "Day", labels, index=default_index, key=f"record_session_{course_code}"
+    )
+    return session_ids[labels.index(label)]
+
+
+def show_record_attendance(connection):
+    """Pick block, course and day, then record or correct attendance (FR-07, FR-08)."""
+    st.subheader("Record or correct attendance")
+
+    course_code = choose_course(connection, "record")
+    if course_code is None:
         return
 
-    st.warning(f"This will remove 1 course: {course_label}. No sessions or students use it.")
-    if ask_to_confirm(f"course_{course_code}"):
-        counts = database.delete_course(connection, course_code)
-        finish_edit(f"Deleted course {course_code}: removed {describe_counts(counts)}.")
+    session_id = choose_session(connection, course_code)
+    if session_id is None:
+        return
+    session_label = describe_session(database.get_session(connection, session_id))
+
+    table = build_attendance_table(connection, session_id)
+    if table.empty:
+        st.info(
+            f"No students are expected on {session_label}: nobody is enrolled in "
+            f"{course_code} on that date. Enroll a student, or check their enrollment dates."
+        )
+        return
+
+    # "Mark all Present" fills the blank rows; a new editor key shows the new values.
+    marked_key = f"mark_all_{session_id}"
+    if st.button("Mark all Present", key=f"mark_all_button_{session_id}"):
+        st.session_state[marked_key] = st.session_state.get(marked_key, 0) + 1
+    marked_times = st.session_state.get(marked_key, 0)
+    if marked_times > 0:
+        table = mark_blank_as_present(table)
+
+    st.caption(
+        "Choose Present, Late, Excused or Absent for each student. A blank status means "
+        "Unknown. \"Mark all Present\" fills only the students with no status yet; "
+        "then change the exceptions and save."
+    )
+
+    with st.form(f"record_form_{session_id}"):
+        edited_table = st.data_editor(
+            table,
+            key=f"editor_{session_id}_{marked_times}",
+            hide_index=True,
+            width="stretch",
+            disabled=["student_id", "full_name"],
+            column_config={
+                "student_id": st.column_config.TextColumn("Student ID"),
+                "full_name": st.column_config.TextColumn("Full name"),
+                "status": st.column_config.SelectboxColumn(
+                    "Status", options=STATUS_OPTIONS, required=False
+                ),
+            },
+        )
+        submitted = st.form_submit_button("Save attendance")
+
+    if submitted:
+        counts = save_attendance_table(connection, session_id, edited_table)
+        if marked_key in st.session_state:
+            del st.session_state[marked_key]
+        show_save_result(counts)
+
+    # Shown after saving, so the numbers include what was just saved.
+    show_session_counts(connection, session_id, session_label)
+
+    with st.expander("Delete one attendance record"):
+        show_delete_attendance_record(connection, session_id, session_label)
 
 
-def show_edit_and_delete(connection):
-    """Show every rename and delete section (FR-22, FR-23)."""
-    show_edit_message()
-    show_rename_student(connection)
-    st.divider()
-    show_rename_course(connection)
-    st.divider()
-    show_change_course_dates(connection)
-    st.divider()
-    show_change_enrollment_dates(connection)
-    st.divider()
-    show_delete_attendance_record(connection)
-    st.divider()
-    show_unenroll_student(connection)
-    st.divider()
-    show_delete_student(connection)
-    st.divider()
-    show_delete_session(connection)
-    st.divider()
-    show_delete_course(connection)
+def show_session_counts(connection, session_id, session_label):
+    """Show the five status counts and the rates for one session."""
+    frame = analytics.build_records_frame(database.get_expected_records(connection))
+    session_frame = frame[frame["session_id"] == session_id]
+    rates = analytics.summarize_frame(session_frame)
+
+    st.caption(
+        f"{session_label}: {rates['present']} Present, {rates['late']} Late, "
+        f"{rates['excused']} Excused, {rates['absent']} Absent, "
+        f"{rates['unknown']} Unknown. "
+        f"Attendance rate {analytics.format_rate(rates['attendance_rate'])}, "
+        f"completeness {analytics.format_rate(rates['completeness'])}."
+    )
+
+
+def show_delete_attendance_record(connection, session_id, session_label):
+    """Delete one saved attendance record of this day; the student becomes Unknown (FR-23)."""
+    # Only students with a saved record can have it deleted.
+    record_choices = {}
+    for record in database.get_session_attendance(connection, session_id):
+        if record["status"] is not None:
+            label = f"{record['student_id']} - {record['full_name']} ({record['status']})"
+            record_choices[label] = record["student_id"]
+
+    if not record_choices:
+        st.info("No saved attendance records on this day.")
+        return
+
+    record_label = st.selectbox(
+        "Student", list(record_choices), key=f"delete_record_student_{session_id}"
+    )
+    student_id = record_choices[record_label]
+
+    st.warning(
+        f"This will remove 1 attendance record: {record_label} on {session_label}. "
+        "The student becomes Unknown for that day."
+    )
+    if ask_to_confirm(f"record_{session_id}_{student_id}"):
+        counts = database.delete_attendance_record(connection, student_id, session_id)
+        finish_edit(f"Deleted {describe_counts(counts)} for {student_id} on {session_label}.")
+
+
+# ---------- Settings (BR-22) ----------
+
+def show_settings():
+    """Show the mark deductions. Editing them comes in Stage 3 (BR-22)."""
+    st.subheader("Settings")
+    columns = st.columns(2)
+    columns[0].metric("Late deduction (marks)", analytics.DEFAULT_LATE_DEDUCTION)
+    columns[1].metric("Absent deduction (marks)", analytics.DEFAULT_ABSENT_DEDUCTION)
+    st.caption(
+        "Marks deducted per student per course: Late x 1 + Absent x 2. "
+        "Present and Excused deduct nothing; Unknown deducts nothing but is flagged. "
+        "Editing these values comes in Stage 3."
+    )
 
 
 # ---------- FR-09: search students ----------
@@ -1090,7 +1274,9 @@ def show_search_students(connection):
             "Courses": join_course_codes(connection, student["student_id"]),
         })
 
-    st.write(f"{len(rows)} match(es) found.")
+    st.write(f"{len(rows)} match(es) found. The first one is opened in the profile below.")
+    first_match = matches[0]
+    st.session_state["open_profile"] = f"{first_match['student_id']} - {first_match['full_name']}"
     st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
 
 
@@ -1593,38 +1779,45 @@ def show_single_student_report(student_id, student_label, filtered_records):
 # ---------- Tabs ----------
 
 def show_manage_tab(connection):
-    """Show the Manage Attendance sections grouped into sub-tabs."""
-    students_tab, courses_tab, sessions_tab, record_tab, edit_tab = st.tabs(
-        ["Students", "Courses", "Sessions", "Record Attendance", "Edit & Delete"]
+    """Show the Manage Attendance sub-tabs: each thing is changed in its own sub-tab (6.1).
+
+    Every change ends with a rerun (finish_edit), so all lists are up to date and
+    its message is shown here, above the sub-tabs.
+    """
+    show_edit_message()
+    courses_tab, students_tab, days_tab, record_tab, settings_tab = st.tabs(
+        ["Blocks & Courses", "Students", "Class days & Tutorials", "Record attendance",
+         "Settings"]
     )
 
-    # Courses run first so a course created in this run already appears in the
-    # Students and Sessions lists. The order of the sub-tabs on screen stays the same.
     with courses_tab:
         show_add_block(connection)
         st.divider()
         show_add_course(connection)
         st.divider()
+        show_block_list(connection)
         show_course_list(connection)
+        st.divider()
+        show_course_details(connection)
+        st.divider()
+        show_delete_block(connection)
 
     with students_tab:
         # Search first, so the user can check whether a student exists before adding.
         show_search_students(connection)
         st.divider()
+        show_student_profile(connection)
+        st.divider()
         show_add_student(connection)
-        st.divider()
-        show_enroll_student(connection)
 
-    with sessions_tab:
-        show_add_tutorial(connection)
-        st.divider()
-        show_session_list(connection)
+    with days_tab:
+        show_class_days_tab(connection)
 
     with record_tab:
         show_record_attendance(connection)
 
-    with edit_tab:
-        show_edit_and_delete(connection)
+    with settings_tab:
+        show_settings()
 
 
 def show_demo_controls(connection):

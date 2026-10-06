@@ -309,15 +309,33 @@ def insert_class_days(connection, course_code, class_days):
         )
 
 
-def create_course(connection, course_code, course_name, block_id):
-    """Create a course in a block, with the block's dates and one class per weekday.
+def create_course(connection, course_code, course_name, block_id,
+                  start_date=None, end_date=None):
+    """Create a course in a block, with one class per weekday of its period.
 
-    BR-19: the course takes the block dates. BR-20: a Class session is generated for
-    every Monday to Friday. Everything runs in one transaction. Returns the number of
-    class days created.
+    BR-19: the course takes the block dates, unless a shorter period inside the block
+    is given (start_date and end_date). BR-20: a Class session is generated for every
+    Monday to Friday of the period. Everything runs in one transaction. Returns the
+    number of class days created. Raises ValueError if the period leaves the block or
+    ends before it starts.
     """
     block = get_block(connection, block_id)
-    class_days = validation.list_class_days(block["start_date"], block["end_date"])
+    if start_date is None:
+        start_date = block["start_date"]
+    if end_date is None:
+        end_date = block["end_date"]
+
+    if not validation.are_period_dates_valid(start_date, end_date):
+        raise ValueError(validation.COURSE_DATES_ERROR)
+    if not validation.is_enrollment_in_course_period(
+        start_date, end_date, block["start_date"], block["end_date"]
+    ):
+        period = validation.describe_course_period(block["start_date"], block["end_date"])
+        raise ValueError(validation.COURSE_OUTSIDE_BLOCK_ERROR.format(
+            course_code, block_id, period
+        ))
+
+    class_days = validation.list_class_days(start_date, end_date)
 
     with connection:
         connection.execute(
@@ -325,11 +343,36 @@ def create_course(connection, course_code, course_name, block_id):
             INSERT INTO courses (course_code, course_name, block_id, start_date, end_date)
             VALUES (?, ?, ?, ?, ?)
             """,
-            (course_code, course_name, block_id, block["start_date"], block["end_date"]),
+            (course_code, course_name, block_id, start_date, end_date),
         )
         insert_class_days(connection, course_code, class_days)
 
     return len(class_days)
+
+
+def get_block_courses(connection, block_id):
+    """Return the courses of a block, sorted by code."""
+    return connection.execute(
+        """
+        SELECT course_code, course_name, block_id, start_date, end_date
+        FROM courses WHERE block_id = ? ORDER BY course_code
+        """,
+        (block_id,),
+    ).fetchall()
+
+
+def delete_block(connection, block_id):
+    """Delete a block that has no courses (Section 6.1).
+
+    Raises ValueError, and deletes nothing, if a course still belongs to the block.
+    """
+    course_count = len(get_block_courses(connection, block_id))
+    if course_count > 0:
+        raise ValueError(validation.BLOCK_IN_USE_ERROR.format(block_id, course_count))
+
+    with connection:
+        cursor = connection.execute("DELETE FROM blocks WHERE block_id = ?", (block_id,))
+    return {"blocks": cursor.rowcount}
 
 
 def count_records_outside_period(connection, course_code, start_date, end_date):
@@ -611,6 +654,21 @@ def get_student_courses(connection, student_id):
         ORDER BY courses.course_code
         """,
         (student_id,),
+    ).fetchall()
+
+
+def get_course_enrollments(connection, course_code):
+    """Return the students enrolled in a course with their enrollment dates, sorted by ID."""
+    return connection.execute(
+        """
+        SELECT students.student_id, students.full_name,
+               enrollments.start_date, enrollments.end_date
+        FROM enrollments
+        JOIN students ON students.student_id = enrollments.student_id
+        WHERE enrollments.course_code = ?
+        ORDER BY students.student_id
+        """,
+        (course_code,),
     ).fetchall()
 
 
@@ -1010,23 +1068,58 @@ def delete_session(connection, session_id):
     }
 
 
-def delete_course(connection, course_code):
-    """Delete a course that has no sessions and no enrolled students.
+def count_delete_course(connection, course_code):
+    """Return what deleting a course would remove (Version 3 rule, Section 11)."""
+    return {
+        "class_days": count_rows(
+            connection,
+            "SELECT COUNT(*) FROM sessions WHERE course_code = ? AND session_type = 'Class'",
+            (course_code,),
+        ),
+        "tutorials": count_rows(
+            connection,
+            "SELECT COUNT(*) FROM sessions WHERE course_code = ? AND session_type = 'Tutorial'",
+            (course_code,),
+        ),
+        "enrollments": count_rows(
+            connection, "SELECT COUNT(*) FROM enrollments WHERE course_code = ?", (course_code,)
+        ),
+        "attendance": count_rows(
+            connection,
+            """
+            SELECT COUNT(*) FROM attendance
+            WHERE session_id IN (SELECT session_id FROM sessions WHERE course_code = ?)
+            """,
+            (course_code,),
+        ),
+        "courses": 1,
+    }
 
-    Raises ValueError if anything still uses the course, so nothing is removed by accident.
+
+def delete_course(connection, course_code):
+    """Delete a course with its class days, tutorials, enrollments and records.
+
+    Class days are generated, so a course always has sessions; the Version 2 rule
+    "only when it has no sessions" is replaced by a preview of counts and a
+    confirmation in the app (Section 11). Everything is removed in one transaction:
+    the rows that point to others go first, so the foreign keys stay valid.
     """
-    session_count, student_count = get_course_usage(connection, course_code)
-    if session_count > 0 or student_count > 0:
-        raise ValueError(
-            f"Course {course_code} still has {session_count} session(s) and "
-            f"{student_count} enrolled student(s)."
-        )
+    counts = count_delete_course(connection, course_code)
 
     with connection:
-        cursor = connection.execute(
-            "DELETE FROM courses WHERE course_code = ?", (course_code,)
+        connection.execute(
+            """
+            DELETE FROM attendance
+            WHERE session_id IN (SELECT session_id FROM sessions WHERE course_code = ?)
+            """,
+            (course_code,),
         )
-    return {"courses": cursor.rowcount}
+        connection.execute("DELETE FROM enrollments WHERE course_code = ?", (course_code,))
+        connection.execute("DELETE FROM sessions WHERE course_code = ?", (course_code,))
+        cursor = connection.execute("DELETE FROM courses WHERE course_code = ?", (course_code,))
+
+    counts["courses"] = cursor.rowcount
+    return counts
 
 
 def get_session_attendance(connection, session_id):

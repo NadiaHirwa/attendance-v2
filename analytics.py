@@ -581,3 +581,18 @@ def build_deductions_table(frame):
         })
 
     return pd.DataFrame(rows, columns=columns)
+
+
+def build_student_profile(frame):
+    """Return one student's courses: enrollment period, counts, rates, streaks and the
+    deducted marks per course (Section 6.1, student profile).
+
+    frame holds the records of one student. This is build_course_summary() with a
+    "Deducted marks" column added (BR-22).
+    """
+    profile = build_course_summary(frame)
+    deducted = []
+    for index, row in profile.iterrows():
+        deducted.append(calculate_deduction(row[LATE], row[ABSENT]))
+    profile[DEDUCTED_COLUMN] = deducted
+    return profile

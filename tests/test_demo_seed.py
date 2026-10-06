@@ -166,6 +166,44 @@ class TestTwoStudentsByHand(SeedV3TestCase):
         self.assertEqual(list(alerts["Course"]), ["PY101"])
 
 
+class TestManageOnSeed(SeedV3TestCase):
+
+    def test_delete_course_counts_ma103(self):
+        """FR-23 (Version 3 rule), by hand: MA103 has 15 class days, 2 tutorials and
+        10 enrollments; its 165 expected records minus 1 Unknown (007 on 25/09) = 164."""
+        preview = database.count_delete_course(self.connection, "MA103")
+        counts = database.delete_course(self.connection, "MA103")
+
+        expected = {"class_days": 15, "tutorials": 2, "enrollments": 10, "attendance": 164,
+                    "courses": 1}
+        self.assertEqual(preview, expected)
+        self.assertEqual(counts, expected)
+        # 505 expected - 165 for MA103 = 340 left.
+        self.assertEqual(analytics.calculate_dashboard_metrics(self.records())["expected"], 340)
+
+    def test_remove_holiday_preview(self):
+        """Section 11: removing PY101's class on 16/09 deletes 11 records (12 students
+        enrolled, 003 has no record that day)."""
+        counts = database.count_delete_session(self.connection, "PY101-2026-09-16")
+
+        self.assertEqual(counts["attendance"], 11)
+
+    def test_student_profile_of_002(self):
+        """Section 6.1, by hand: 002's profile shows PY101 with 70.59% and 12 marks deducted,
+        and DS102 and MA103 with 100.00% and 0 deducted."""
+        records = analytics.filter_student(self.records(), "002")
+        profile = analytics.format_summary_table(analytics.build_student_profile(records))
+
+        py101 = profile[profile["Course"] == "PY101"].iloc[0]
+        self.assertEqual(py101["Attendance rate"], "70.59%")
+        self.assertEqual(py101[analytics.DEDUCTED_COLUMN], 12)
+        self.assertEqual(py101[analytics.ENROLLED_FROM_COLUMN], "start")
+        for course_code in ["DS102", "MA103"]:
+            row = profile[profile["Course"] == course_code].iloc[0]
+            self.assertEqual(row["Attendance rate"], "100.00%")
+            self.assertEqual(row[analytics.DEDUCTED_COLUMN], 0)
+
+
 class TestDemoFiles(SeedV3TestCase):
 
     def test_messy_file_counts(self):
