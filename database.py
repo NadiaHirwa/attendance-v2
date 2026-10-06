@@ -49,6 +49,11 @@ CREATE TABLE IF NOT EXISTS sessions (
     session_type TEXT NOT NULL DEFAULT 'Class' CHECK (session_type IN ('Class', 'Tutorial'))
 );
 
+CREATE TABLE IF NOT EXISTS settings (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS attendance (
     student_id  TEXT NOT NULL REFERENCES students,
     session_id  TEXT NOT NULL REFERENCES sessions,
@@ -90,8 +95,65 @@ def create_tables(connection):
     add_enrollment_date_columns(connection)
     add_session_type_column(connection)
     make_class_days_unique(connection)
+    add_default_settings(connection)
     connection.commit()
     upgrade_attendance_statuses(connection)
+
+
+# ---------- Settings (BR-22) ----------
+
+LATE_DEDUCTION_KEY = "late_deduction"
+ABSENT_DEDUCTION_KEY = "absent_deduction"
+
+
+def add_default_settings(connection):
+    """Save Late = 1 and Absent = 2 if the settings are not there yet (BR-22).
+
+    CREATE TABLE IF NOT EXISTS adds the settings table to an older database;
+    INSERT OR IGNORE keeps values that were already changed.
+    """
+    connection.execute(
+        "INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)",
+        (LATE_DEDUCTION_KEY, str(validation.DEFAULT_LATE_DEDUCTION)),
+    )
+    connection.execute(
+        "INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)",
+        (ABSENT_DEDUCTION_KEY, str(validation.DEFAULT_ABSENT_DEDUCTION)),
+    )
+
+
+def get_deduction_settings(connection):
+    """Return the marks deducted per Late and per Absent, like {'late': 1, 'absent': 2}."""
+    settings = {}
+    for row in connection.execute("SELECT key, value FROM settings"):
+        settings[row["key"]] = int(row["value"])
+    return {
+        "late": settings[LATE_DEDUCTION_KEY],
+        "absent": settings[ABSENT_DEDUCTION_KEY],
+    }
+
+
+def save_deduction_settings(connection, late_deduction, absent_deduction):
+    """Save both deduction settings in one transaction (BR-22).
+
+    Raises ValueError, and saves nothing, unless both are whole numbers from 0 to 10.
+    """
+    late_value = validation.parse_deduction(late_deduction)
+    if late_value is None:
+        raise ValueError(validation.DEDUCTION_ERROR.format("Late", f'"{late_deduction}"'))
+
+    absent_value = validation.parse_deduction(absent_deduction)
+    if absent_value is None:
+        raise ValueError(validation.DEDUCTION_ERROR.format("Absent", f'"{absent_deduction}"'))
+
+    with connection:
+        connection.execute(
+            "UPDATE settings SET value = ? WHERE key = ?", (str(late_value), LATE_DEDUCTION_KEY)
+        )
+        connection.execute(
+            "UPDATE settings SET value = ? WHERE key = ?",
+            (str(absent_value), ABSENT_DEDUCTION_KEY),
+        )
 
 
 def get_column_names(connection, pragma_query):
@@ -901,6 +963,8 @@ def import_records(connection, records, source, enrollment_starts):
 def clear_all_data(connection):
     """Delete every row from every table, in one transaction (used by "Reset demo data").
 
+    The settings go back to their defaults.
+
     Rows that point to others go first, so the foreign keys stay valid.
     """
     with connection:
@@ -910,6 +974,9 @@ def clear_all_data(connection):
         connection.execute("DELETE FROM students")
         connection.execute("DELETE FROM courses")
         connection.execute("DELETE FROM blocks")
+        # The demo uses the default deductions, Late = 1 and Absent = 2.
+        connection.execute("DELETE FROM settings")
+        add_default_settings(connection)
 
 
 # ---------- Rename (FR-22) ----------

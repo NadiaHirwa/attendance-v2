@@ -129,7 +129,7 @@ class TestTwoStudentsByHand(SeedV3TestCase):
             (10, 2, 0, 5, 0),
         )
         self.assertEqual(analytics.format_rate(rates["attendance_rate"]), "70.59%")
-        self.assertEqual(analytics.calculate_deduction(rates["late"], rates["absent"]), 12)
+        self.assertEqual(analytics.calculate_deduction(rates["late"], rates["absent"], 1, 2), 12)
         statuses = analytics.statuses_in_session_order(records)
         self.assertEqual(analytics.calculate_streaks(statuses), (3, 0))
 
@@ -151,7 +151,7 @@ class TestTwoStudentsByHand(SeedV3TestCase):
         self.assertEqual((rates["present"], rates["absent"], rates["unknown"]), (32, 1, 0))
         self.assertEqual(analytics.format_rate(rates["attendance_rate"]), "96.97%")
 
-        deductions = analytics.build_deductions_table(self.records())
+        deductions = analytics.build_deductions_table(self.records(), 1, 2)
         row = deductions[(deductions["student_id"] == "010")
                          & (deductions["course_code"] == "DS102")].iloc[0]
         self.assertEqual(row[analytics.DEDUCTED_COLUMN], 2)
@@ -192,7 +192,7 @@ class TestManageOnSeed(SeedV3TestCase):
         """Section 6.1, by hand: 002's profile shows PY101 with 70.59% and 12 marks deducted,
         and DS102 and MA103 with 100.00% and 0 deducted."""
         records = analytics.filter_student(self.records(), "002")
-        profile = analytics.format_summary_table(analytics.build_student_profile(records))
+        profile = analytics.format_summary_table(analytics.build_student_profile(records, 1, 2))
 
         py101 = profile[profile["Course"] == "PY101"].iloc[0]
         self.assertEqual(py101["Attendance rate"], "70.59%")

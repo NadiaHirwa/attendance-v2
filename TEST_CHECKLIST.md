@@ -3,7 +3,7 @@
 **Before every section:** run `.venv\Scripts\python seed_demo.py`, restart Streamlit, refresh the browser.
 Every row starts from the seed data unless it says otherwise.
 
-✔ = confirmed by running the code (on a copy of the database or by an automated test). Run `.venv\Scripts\python -m unittest`: **199 tests, all OK**.
+✔ = confirmed by running the code (on a copy of the database or by an automated test). Run `.venv\Scripts\python -m unittest`: **215 tests, all OK**.
 
 Dates are shown as **DD/MM/YYYY** everywhere on screen and in downloads (BR-23).
 
@@ -18,7 +18,7 @@ Dates are shown as **DD/MM/YYYY** everywhere on screen and in downloads (BR-23).
 
 **002 in PY101 loses 12 marks** (2 Late x 1 + 5 Absent x 2). ✔
 
-**Formulas:** attendance rate = (Present + Late) ÷ (Present + Late + Absent). Completeness = all recorded ÷ expected. Excused is recorded but left out of the rate. Unknown is never stored. Deducted marks = Late x 1 + Absent x 2 (Stage 3 makes these editable).
+**Formulas:** attendance rate = (Present + Late) ÷ (Present + Late + Absent). Completeness = all recorded ÷ expected. Excused is recorded but left out of the rate. Unknown is never stored. Deducted marks = Late x late deduction + Absent x absent deduction (settings, default **1** and **2**); Present, Excused and Unknown deduct nothing; Unknown is flagged "N not recorded"; no maximum.
 
 **Seed data (Version 3):**
 - Block **B1-2627** "Block 1, 2026-27", Monday 07/09/2026 to Friday 25/09/2026.
@@ -119,7 +119,13 @@ Dates are shown as **DD/MM/YYYY** everywhere on screen and in downloads (BR-23).
 
 | # | Do | Expected |
 |---|---|---|
-| 6.1 | Open Settings | ✔ Late deduction **1**, Absent deduction **2**. Editing comes in Stage 3. |
+| 6.1 | Open Settings | ✔ Late deduction **1**, Absent deduction **2**, and the rule: "Late x 1 + Absent x 2 … There is no maximum." |
+| 6.2 | Save Late 3, Absent **11** | ✔ Refused: "Invalid Absent deduction "11". Expected a whole number from 0 to 10." Nothing is saved (Late stays 1). |
+| 6.3 | Save Late **-1** | ✔ Refused with the same kind of message. |
+| 6.4 | Save Late 0 and Absent 10 | ✔ Accepted (both limits are allowed). |
+| 6.5 | Save Late **2**, Absent **3** | ✔ "Settings saved … Every report now uses these values." 002's profile, the per-student summary and the PY101 export all show **19** for 002 (2 x 2 + 5 x 3). |
+| 6.6 | Save without changing anything | "No change". |
+| 6.7 | Reset demo data (sidebar) | ✔ The settings go back to 1 and 2. |
 
 ## 7. Import & Validate: the file itself
 
@@ -183,10 +189,12 @@ Columns: `course_code, date, student_id, full_name, status`, optional `type` (Cl
 
 | # | Do | Expected |
 |---|---|---|
-| 10.1 | "All students" | Overall metrics, per-student table, attendance records, 2 downloads (dates as DD/MM/YYYY). |
-| 10.2 | Download both CSVs, open them | Same rows and numbers as on screen. |
-| 10.3 | Student 002 | ✔ **43 / 2 / 0 / 5 / 0, 90.00%** overall; By course: PY101 70.59%, longest streak 3. |
-| 10.4 | Student 008 | ✔ 48 / 0 / 1 / 0 / 1, 100.00%, 98.00%. DS102 tutorial 24/09 is **Unknown**. |
+| 10.1 | "All students" | Overall metrics, per-student table with **Deducted marks** and **Note**, attendance records, the deductions export; every table has a download (dates as DD/MM/YYYY). |
+| 10.2 | Download the CSVs, open them | Same rows and numbers as on screen, including Deducted marks. |
+| 10.3 | Student 002 | ✔ **43 / 2 / 0 / 5 / 0, 90.00%** overall, **Deducted marks 12**; By course: PY101 70.59%, deducted 12, longest streak 3. |
+| 10.4 | Student 008 | ✔ 48 / 0 / 1 / 0 / 1, 100.00%, 98.00%. Deducted 0, Note **"1 not recorded"** (DS102 tutorial 24/09 is Unknown). |
+| 10.4b | Deductions export → PY101 | ✔ 12 rows sorted by ID; columns Student ID, Full name, Late, Absent, Excused, Not recorded, Deducted marks; 002 = **12**. Downloads as `deductions_PY101.csv`. |
+| 10.4c | Deductions export → DS102 | ✔ 008: Not recorded **1**, Deducted **0** (missing records never deduct). |
 | 10.5 | Student 010 (late joiner) | ✔ 33 expected: 32 Present, 1 Absent, **96.97%**. "Enrolled from 14/09/2026"; the history starts on 14/09. |
 | 10.6 | Student 012 (early leaver) | ✔ 21 expected: 20 Present, 1 Late, 100.00%. "Enrolled until 18/09/2026". |
 | 10.7 | Student 003 + course DS102 | Info message (003 isn't in DS102). |
@@ -206,6 +214,7 @@ Columns: `course_code, date, student_id, full_name, status`, optional `type` (Cl
 ## Answers to have ready
 
 - **Why are class days generated?** At AIMS every course meets every weekday of its block. Generating them means tutors never type session IDs, and a class can't be put on a weekend by mistake. Holidays are removed; tutorials are added by date.
+- **How are marks deducted?** Late x 1 + Absent x 2 per course by default; both values are settings (0 to 10). Excused and Present deduct nothing. A missing record deducts nothing but is flagged "not recorded", so the tutor fixes the data before the grade sheet. There is no maximum, because the rule as given has none. Tutorials count like classes.
 - **Why is Excused not in the attendance rate?** The student was allowed to miss it: counting it as absent is unfair, counting it as present is untrue. It still counts for completeness because it is recorded. Late counts as attended.
 - **Why is Unknown not Absent?** Missing data isn't evidence of absence. 7 Present, 2 Absent, 1 Unknown = 77.78% attendance and 90% completeness, not 70%.
 - **Why do alerts use the current streak?** An alert should point to a student who is absent *now*. 002 had 3 absences in a row but came back; 009 is absent on the last two days.

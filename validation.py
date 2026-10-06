@@ -22,6 +22,11 @@ BLOCK_WEEKS = 3
 WEEKDAY_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
 CLASS = "Class"
 TUTORIAL = "Tutorial"
+# Marks deducted per Late and per Absent (BR-22): the defaults of the settings table.
+DEFAULT_LATE_DEDUCTION = 1
+DEFAULT_ABSENT_DEDUCTION = 2
+MIN_DEDUCTION = 0
+MAX_DEDUCTION = 10
 
 # Error messages say what was wrong and what is expected (BR-13).
 STUDENT_ID_ERROR = "Invalid student ID. Expected exactly 3 digits from 001 to 999."
@@ -62,6 +67,7 @@ RECORDS_ON_REMOVED_DAYS_ERROR = (
     "the new period and would be lost. Delete those records first or choose a wider period."
 )
 NO_CLASS_ERROR = "{} has no class on {} {}."
+DEDUCTION_ERROR = "Invalid {} deduction {}. Expected a whole number from 0 to 10."
 STATUS_ERROR = (
     "Invalid status. Expected P, L, E, A, Present, Late, Excused or Absent."
 )
@@ -441,6 +447,33 @@ def describe_course_period(start_date, end_date):
     if end_date is not None:
         return f"until {format_date(end_date)}"
     return "with no set dates"
+
+
+def parse_deduction(value):
+    """Return a deduction setting as a whole number from 0 to 10, or None if invalid (BR-22).
+
+    Accepts a whole number (5, 5.0) or text ('5'). Rejects -1, 11, 1.5 and other text.
+    """
+    if isinstance(value, bool):
+        return None
+
+    if isinstance(value, float):
+        if not value.is_integer():
+            return None
+        value = int(value)
+
+    if isinstance(value, str):
+        text = value.strip()
+        if not text.isascii() or not text.isdigit():
+            return None
+        value = int(text)
+
+    if not isinstance(value, int):
+        return None
+
+    if value < MIN_DEDUCTION or value > MAX_DEDUCTION:
+        return None
+    return value
 
 
 def normalize_status(status):

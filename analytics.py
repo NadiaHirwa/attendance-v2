@@ -25,10 +25,11 @@ CHART_STATUS_COLUMN = "Status"
 CHART_COUNT_COLUMN = "Students"
 CHART_ORDER_COLUMN = "Stack order"
 DEFAULT_STREAK_ALERT = 2
-# Marks deducted per Late and per Absent (BR-22). Stage 3 makes them editable settings.
-DEFAULT_LATE_DEDUCTION = 1
-DEFAULT_ABSENT_DEDUCTION = 2
+# Deduction columns (BR-22, FR-29). The deductions themselves are settings.
 DEDUCTED_COLUMN = "Deducted marks"
+# The count of missing records in the deductions export, and the flag on screens.
+NOT_RECORDED_COLUMN = "Not recorded"
+NOT_RECORDED_FLAG_COLUMN = "Note"
 # Columns that hold dates in the tables shown on screen and downloaded (BR-23).
 DATE_COLUMNS = ["Date", "Enrolled from", "Enrolled until", "Last absence", "date",
                 "Start date", "End date"]
@@ -551,21 +552,50 @@ def format_date_columns(table):
     return formatted
 
 
-# ---------- Mark deductions (BR-22) ----------
+# ---------- Mark deductions (BR-22, FR-29) ----------
 
-def calculate_deduction(late, absent, late_deduction=DEFAULT_LATE_DEDUCTION,
-                        absent_deduction=DEFAULT_ABSENT_DEDUCTION):
+def calculate_deduction(late, absent, late_deduction, absent_deduction):
     """Return the marks deducted: Late x late_deduction + Absent x absent_deduction (BR-22).
 
+    This is the only place the formula lives. The two deductions come from the settings
+    table, so every screen and download uses the current settings.
     Present and Excused deduct nothing. Unknown deducts nothing (it is flagged instead).
     There is no maximum.
     """
     return late * late_deduction + absent * absent_deduction
 
 
-def build_deductions_table(frame):
-    """Return one row per student per course with Late, Absent, Unknown and deducted marks."""
-    columns = ["student_id", "full_name", "course_code", LATE, ABSENT, UNKNOWN, DEDUCTED_COLUMN]
+def describe_not_recorded(unknown):
+    """Return the flag for records that are missing, like '2 not recorded', or ''."""
+    if unknown > 0:
+        return f"{unknown} not recorded"
+    return ""
+
+
+def add_deduction_columns(table, late_deduction, absent_deduction):
+    """Return a copy of a summary table with "Deducted marks" and the "Not recorded" flag.
+
+    The table needs Late, Absent and Unknown columns (a per-student summary, a
+    by-course table or a student profile).
+    """
+    with_deductions = table.copy()
+    deducted = []
+    flags = []
+    for index, row in with_deductions.iterrows():
+        deducted.append(
+            calculate_deduction(row[LATE], row[ABSENT], late_deduction, absent_deduction)
+        )
+        flags.append(describe_not_recorded(row[UNKNOWN]))
+    with_deductions[DEDUCTED_COLUMN] = deducted
+    with_deductions[NOT_RECORDED_FLAG_COLUMN] = flags
+    return with_deductions
+
+
+def build_deductions_table(frame, late_deduction, absent_deduction):
+    """Return one row per student per course with Late, Absent, Excused, Unknown and
+    the deducted marks."""
+    columns = ["student_id", "full_name", "course_code", LATE, ABSENT, EXCUSED, UNKNOWN,
+               DEDUCTED_COLUMN]
     rows = []
 
     for (student_id, course_code), group in frame.groupby(["student_id", "course_code"]):
@@ -576,23 +606,36 @@ def build_deductions_table(frame):
             "course_code": course_code,
             LATE: late,
             ABSENT: absent,
+            EXCUSED: excused,
             UNKNOWN: unknown,
-            DEDUCTED_COLUMN: calculate_deduction(late, absent),
+            DEDUCTED_COLUMN: calculate_deduction(late, absent, late_deduction, absent_deduction),
         })
 
     return pd.DataFrame(rows, columns=columns)
 
 
-def build_student_profile(frame):
-    """Return one student's courses: enrollment period, counts, rates, streaks and the
-    deducted marks per course (Section 6.1, student profile).
+def build_course_deductions(frame, course_code, late_deduction, absent_deduction):
+    """Return the deductions export of one course, ready for the grade sheet (FR-29).
 
-    frame holds the records of one student. This is build_course_summary() with a
-    "Deducted marks" column added (BR-22).
+    Columns: Student ID, Full name, Late, Absent, Excused, Not recorded, Deducted marks.
+    Sorted by student ID.
     """
-    profile = build_course_summary(frame)
-    deducted = []
-    for index, row in profile.iterrows():
-        deducted.append(calculate_deduction(row[LATE], row[ABSENT]))
-    profile[DEDUCTED_COLUMN] = deducted
-    return profile
+    deductions = build_deductions_table(frame, late_deduction, absent_deduction)
+    course_rows = deductions[deductions["course_code"] == course_code]
+    course_rows = course_rows.sort_values("student_id", ignore_index=True)
+    export = course_rows[["student_id", "full_name", LATE, ABSENT, EXCUSED, UNKNOWN,
+                          DEDUCTED_COLUMN]]
+    return export.rename(columns={
+        "student_id": "Student ID",
+        "full_name": "Full name",
+        UNKNOWN: NOT_RECORDED_COLUMN,
+    })
+
+
+def build_student_profile(frame, late_deduction, absent_deduction):
+    """Return one student's courses: enrollment period, counts, rates, streaks, the
+    deducted marks per course and the "not recorded" flag (Section 6.1, FR-29).
+
+    frame holds the records of one student.
+    """
+    return add_deduction_columns(build_course_summary(frame), late_deduction, absent_deduction)

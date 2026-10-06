@@ -854,14 +854,18 @@ def show_profile_table(connection, student_id):
             st.info(f"Enrolled in {course_codes}, but no sessions are expected yet.")
         return
 
-    profile = analytics.format_summary_table(analytics.build_student_profile(student_records))
-    profile = analytics.format_date_columns(profile)
+    settings = database.get_deduction_settings(connection)
+    profile = analytics.build_student_profile(
+        student_records, settings["late"], settings["absent"]
+    )
+    profile = analytics.format_date_columns(analytics.format_summary_table(profile))
     columns = [
         "Course", analytics.ENROLLED_FROM_COLUMN, analytics.ENROLLED_UNTIL_COLUMN,
         "Present", "Late", "Excused", "Absent", "Unknown", "Attendance rate",
-        "Completeness", analytics.DEDUCTED_COLUMN,
+        "Completeness", analytics.DEDUCTED_COLUMN, analytics.NOT_RECORDED_FLAG_COLUMN,
     ]
     st.dataframe(profile[columns], hide_index=True, width="stretch")
+    st.caption(describe_deduction_rule(settings))
 
 
 def show_student_profile(connection):
@@ -1210,16 +1214,49 @@ def show_delete_attendance_record(connection, session_id, session_label):
 
 # ---------- Settings (BR-22) ----------
 
-def show_settings():
-    """Show the mark deductions. Editing them comes in Stage 3 (BR-22)."""
+def describe_deduction_rule(settings):
+    """Return text like 'Deducted marks per course: Late x 1 + Absent x 2 ...' (BR-22)."""
+    return (
+        f"Deducted marks per course: Late x {settings['late']} + Absent x {settings['absent']}. "
+        "Present and Excused deduct nothing; Unknown deducts nothing but is flagged "
+        "as \"not recorded\". There is no maximum."
+    )
+
+
+def show_settings(connection):
+    """Show and change the marks deducted per Late and per Absent (BR-22)."""
     st.subheader("Settings")
-    columns = st.columns(2)
-    columns[0].metric("Late deduction (marks)", analytics.DEFAULT_LATE_DEDUCTION)
-    columns[1].metric("Absent deduction (marks)", analytics.DEFAULT_ABSENT_DEDUCTION)
-    st.caption(
-        "Marks deducted per student per course: Late x 1 + Absent x 2. "
-        "Present and Excused deduct nothing; Unknown deducts nothing but is flagged. "
-        "Editing these values comes in Stage 3."
+    settings = database.get_deduction_settings(connection)
+
+    # No min/max on the inputs: the rule is checked when saving, with a clear message.
+    with st.form("settings_form"):
+        late_value = st.number_input(
+            "Late deduction (marks)", value=settings["late"], step=1
+        )
+        absent_value = st.number_input(
+            "Absent deduction (marks)", value=settings["absent"], step=1
+        )
+        st.caption("Whole numbers from 0 to 10.")
+        submitted = st.form_submit_button("Save settings")
+
+    st.caption(describe_deduction_rule(settings))
+
+    if not submitted:
+        return
+
+    if late_value == settings["late"] and absent_value == settings["absent"]:
+        st.info(validation.NO_CHANGE_MESSAGE.format("settings"))
+        return
+
+    try:
+        database.save_deduction_settings(connection, late_value, absent_value)
+    except ValueError as error:
+        st.error(str(error))
+        return
+
+    finish_edit(
+        f"Settings saved: Late deducts {int(late_value)} mark(s), Absent deducts "
+        f"{int(absent_value)} mark(s). Every report now uses these values."
     )
 
 
@@ -1713,36 +1750,63 @@ def show_reports_tab(connection, filtered_records, filter_text):
     if not has_data_to_show(filtered_records, filter_text):
         return
 
+    settings = database.get_deduction_settings(connection)
     student_choices = get_student_choices(connection)
     options = [ALL_STUDENTS] + list(student_choices)
     student_label = st.selectbox("Student", options, key="report_student")
 
     if student_label == ALL_STUDENTS:
-        show_all_students_report(filtered_records)
+        show_all_students_report(filtered_records, settings)
     else:
         student_id = student_choices[student_label]
-        show_single_student_report(student_id, student_label, filtered_records)
+        show_single_student_report(student_id, student_label, filtered_records, settings)
 
 
-def show_all_students_report(filtered_records):
-    """Show the overall numbers, the per-student summary and the attendance records (FR-16)."""
+def show_all_students_report(filtered_records, settings):
+    """Show the overall numbers, the per-student summary with deducted marks, the
+    attendance records and the deductions export (FR-16, FR-29)."""
     st.subheader("All students")
     show_summary_metrics(filtered_records)
 
     st.markdown("**Per-student summary**")
-    student_summary = analytics.build_student_summary(filtered_records)
+    student_summary = analytics.add_deduction_columns(
+        analytics.build_student_summary(filtered_records), settings["late"], settings["absent"]
+    )
     summary_table = analytics.format_summary_table(student_summary)
     show_table_with_download(summary_table, "student_summary.csv", "download_summary")
+    st.caption(describe_deduction_rule(settings))
 
     st.markdown("**Attendance records**")
     attendance_report = analytics.build_attendance_report(filtered_records)
     show_table_with_download(attendance_report, "attendance_report.csv", "download_attendance")
 
+    show_deductions_export(filtered_records, settings)
+
+
+def show_deductions_export(filtered_records, settings):
+    """Show one course's deductions, ready for the grade sheet, with a CSV download (FR-29)."""
+    st.markdown("**Deductions export**")
+
+    course_codes = sorted(filtered_records["course_code"].unique())
+    course_code = st.selectbox("Course", course_codes, key="deductions_course")
+
+    export = analytics.build_course_deductions(
+        filtered_records, course_code, settings["late"], settings["absent"]
+    )
+    show_table_with_download(export, f"deductions_{course_code}.csv", "download_deductions")
+    st.caption(
+        "One row per enrolled student, using the filters above. \"Not recorded\" counts "
+        "the missing records, which deduct nothing."
+    )
+
 
 # ---------- FR-19: single student report ----------
 
-def show_summary_metrics(records):
-    """Show the five status counts, attendance rate and completeness for some records."""
+def show_summary_metrics(records, settings=None):
+    """Show the five status counts, attendance rate and completeness for some records.
+
+    With settings (one student's report), the deducted marks are shown too (FR-29).
+    """
     rates = analytics.summarize_frame(records)
 
     show_status_counts(rates)
@@ -1750,8 +1814,17 @@ def show_summary_metrics(records):
     rate_columns[0].metric("Attendance rate", analytics.format_rate(rates["attendance_rate"]))
     rate_columns[1].metric("Completeness", analytics.format_rate(rates["completeness"]))
 
+    if settings is not None:
+        deducted = analytics.calculate_deduction(
+            rates["late"], rates["absent"], settings["late"], settings["absent"]
+        )
+        rate_columns[2].metric(analytics.DEDUCTED_COLUMN, deducted)
+        flag = analytics.describe_not_recorded(rates["unknown"])
+        if flag:
+            rate_columns[3].metric("Note", flag)
 
-def show_single_student_report(student_id, student_label, filtered_records):
+
+def show_single_student_report(student_id, student_label, filtered_records, settings):
     """Show one student's numbers, courses and session history, using the filters (FR-19)."""
     st.subheader(f"Report for {student_label}")
 
@@ -1763,13 +1836,19 @@ def show_single_student_report(student_id, student_label, filtered_records):
         )
         return
 
-    show_summary_metrics(student_records)
+    show_summary_metrics(student_records, settings)
 
-    # Shown even for one course, because it holds the absence streaks (FR-21).
+    # Shown even for one course, because it holds the absence streaks (FR-21)
+    # and the deducted marks per course (FR-29).
     st.markdown("**By course**")
-    course_summary = analytics.build_course_summary(student_records)
+    course_summary = analytics.add_deduction_columns(
+        analytics.build_course_summary(student_records), settings["late"], settings["absent"]
+    )
     course_table = analytics.format_summary_table(course_summary)
-    st.dataframe(analytics.format_date_columns(course_table), hide_index=True, width="stretch")
+    show_table_with_download(
+        course_table, f"student_{student_id}_by_course.csv", "download_by_course"
+    )
+    st.caption(describe_deduction_rule(settings))
 
     st.markdown("**Session history**")
     history = analytics.build_student_history(student_records)
@@ -1817,7 +1896,7 @@ def show_manage_tab(connection):
         show_record_attendance(connection)
 
     with settings_tab:
-        show_settings()
+        show_settings(connection)
 
 
 def show_demo_controls(connection):

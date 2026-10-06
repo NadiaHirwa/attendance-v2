@@ -235,8 +235,9 @@ def print_summary(connection):
     print(f"Attendance rate: {analytics.format_rate(metrics['attendance_rate'])}")
     print(f"Completeness: {analytics.format_rate(metrics['completeness'])}")
 
-    print("Deductions (Late x 1 + Absent x 2):")
-    deductions = analytics.build_deductions_table(frame)
+    settings = database.get_deduction_settings(connection)
+    print(f"Deductions (Late x {settings['late']} + Absent x {settings['absent']}):")
+    deductions = analytics.build_deductions_table(frame, settings["late"], settings["absent"])
     for index, row in deductions.iterrows():
         print(
             f"  {row['student_id']} {row['full_name']:<20} {row['course_code']}: "
