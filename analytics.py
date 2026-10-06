@@ -4,6 +4,8 @@ Functions return numbers and DataFrames only. They never print and
 never use Streamlit, so every calculation can be tested.
 """
 
+from datetime import datetime, timedelta
+
 import pandas as pd
 
 import validation
@@ -639,3 +641,217 @@ def build_student_profile(frame, late_deduction, absent_deduction):
     frame holds the records of one student.
     """
     return add_deduction_columns(build_course_summary(frame), late_deduction, absent_deduction)
+
+
+# ---------- Weekly view and class register (FR-27, FR-28) ----------
+
+# Cell symbols on screen (FR-27). The CSV download uses the words below instead.
+WEEKLY_SYMBOLS = {
+    PRESENT: "✅", LATE: "🕐", EXCUSED: "📝", ABSENT: "❌", UNKNOWN: "❔", None: "—",
+}
+WEEKLY_WORDS = {
+    PRESENT: "Present", LATE: "Late", EXCUSED: "Excused", ABSENT: "Absent",
+    UNKNOWN: "Not recorded", None: "No class",
+}
+# Cell letters in the class register (FR-28); None means outside the enrollment period.
+REGISTER_LETTERS = {PRESENT: "P", LATE: "L", EXCUSED: "E", ABSENT: "A", UNKNOWN: "?", None: "—"}
+WEEKDAY_COLUMNS = ["Mon", "Tue", "Wed", "Thu", "Fri"]
+TUTORIALS_COLUMN = "Tutorials"
+
+
+def get_statuses_by_session(records):
+    """Return {session_id: status} for the expected sessions in a records frame.
+
+    A session that is not in the frame (outside the enrollment period) is missing.
+    """
+    statuses = {}
+    for index, row in records.iterrows():
+        statuses[row["session_id"]] = row["status"]
+    return statuses
+
+
+def get_tutorial_number(session):
+    """Return the tutorial number from an ID like 'PY101-2026-09-23-T2' (2), or 1."""
+    last_part = session["session_id"].split("-")[-1]
+    if last_part.startswith("T") and last_part[1:].isdigit():
+        return int(last_part[1:])
+    return 1
+
+
+def make_tutorial_label(session):
+    """Return '23/09' for a date's first tutorial and '23/09 (T2)' for the next ones."""
+    label = validation.format_date(session["session_date"])[:5]
+    number = get_tutorial_number(session)
+    if number > 1:
+        label = f"{label} (T{number})"
+    return label
+
+
+def find_first_monday(date_text):
+    """Return the Monday on or before a 'YYYY-MM-DD' date."""
+    day = datetime.strptime(date_text, validation.DATE_FORMAT)
+    monday = day - timedelta(days=day.weekday())
+    return monday.strftime(validation.DATE_FORMAT)
+
+
+def find_week_number(first_monday, date_text):
+    """Return 1 for the week starting on first_monday, 2 for the next week, and so on."""
+    start = datetime.strptime(first_monday, validation.DATE_FORMAT)
+    day = datetime.strptime(date_text, validation.DATE_FORMAT)
+    return (day - start).days // 7 + 1
+
+
+def find_course_period(sessions, course_start, course_end):
+    """Return the course's (start, end), or its first and last session dates if not set."""
+    start = course_start
+    end = course_end
+    if start is None:
+        start = sessions[0]["session_date"]
+    if end is None:
+        end = sessions[-1]["session_date"]
+    return start, end
+
+
+def build_weekly_view(sessions, records, course_start, course_end, symbols):
+    """Return one student's weekly grid for one course (FR-27).
+
+    sessions: every session of the course in date order (dicts or rows with session_id,
+    session_date and session_type). records: the student's expected records in that
+    course (from build_records_frame). symbols: WEEKLY_SYMBOLS for the screen or
+    WEEKLY_WORDS for the CSV. Rows are "Week 1 (07/09)", ...; columns Mon to Fri and
+    Tutorials. A weekday with no class, or a class outside the student's enrollment
+    period, shows symbols[None].
+    """
+    start, end = find_course_period(sessions, course_start, course_end)
+    first_monday = find_first_monday(start)
+    week_count = find_week_number(first_monday, end)
+    statuses = get_statuses_by_session(records)
+
+    # Empty weeks first; then each session is put in its week.
+    weeks = []
+    for week_index in range(week_count):
+        monday = datetime.strptime(first_monday, validation.DATE_FORMAT)
+        monday = monday + timedelta(days=7 * week_index)
+        label = f"Week {week_index + 1} ({monday.strftime('%d/%m')})"
+        week = {"Week": label}
+        for weekday in WEEKDAY_COLUMNS:
+            week[weekday] = symbols[None]
+        week[TUTORIALS_COLUMN] = []
+        weeks.append(week)
+
+    for session in sessions:
+        week = weeks[find_week_number(first_monday, session["session_date"]) - 1]
+        symbol = symbols[statuses.get(session["session_id"])]
+        if session["session_type"] == validation.TUTORIAL:
+            week[TUTORIALS_COLUMN].append(f"{make_tutorial_label(session)} {symbol}")
+        else:
+            weekday = validation.weekday_name(session["session_date"])[:3]
+            week[weekday] = symbol
+
+    for week in weeks:
+        week[TUTORIALS_COLUMN] = ", ".join(week[TUTORIALS_COLUMN])
+
+    return pd.DataFrame(weeks, columns=["Week"] + WEEKDAY_COLUMNS + [TUTORIALS_COLUMN])
+
+
+def list_week_labels(sessions, course_start, course_end):
+    """Return the week labels of a course, like ['Week 1 (07/09)', 'Week 2 (14/09)', ...]."""
+    start, end = find_course_period(sessions, course_start, course_end)
+    first_monday = find_first_monday(start)
+    labels = []
+    for week_index in range(find_week_number(first_monday, end)):
+        monday = datetime.strptime(first_monday, validation.DATE_FORMAT)
+        monday = monday + timedelta(days=7 * week_index)
+        labels.append(f"Week {week_index + 1} ({monday.strftime('%d/%m')})")
+    return labels
+
+
+def make_register_label(session):
+    """Return a register column label like 'Mon 07/09' or 'Tut 23/09 (T2)' (FR-28)."""
+    if session["session_type"] == validation.TUTORIAL:
+        return f"Tut {make_tutorial_label(session)}"
+    weekday = validation.weekday_name(session["session_date"])[:3]
+    return f"{weekday} {validation.format_date(session['session_date'])[:5]}"
+
+
+def build_class_register(sessions, records, late_deduction, absent_deduction, week=None):
+    """Return the class register of one course (FR-28).
+
+    sessions: every session of the course in date order. records: the course's expected
+    records (from build_records_frame). With week (1, 2, ...), only that week's sessions
+    are shown and counted. Rows are the expected students, sorted by ID; cells are
+    P / L / E / A / ? and "—" outside a student's enrollment period; then the totals,
+    the rate and the deducted marks.
+    """
+    if week is not None and sessions:
+        first_monday = find_first_monday(sessions[0]["session_date"])
+        week_sessions = []
+        for session in sessions:
+            if find_week_number(first_monday, session["session_date"]) == week:
+                week_sessions.append(session)
+        sessions = week_sessions
+
+    session_ids = []
+    labels = []
+    for session in sessions:
+        session_ids.append(session["session_id"])
+        labels.append(make_register_label(session))
+
+    rows = []
+    for student_id, group in records.groupby("student_id", sort=True):
+        statuses = get_statuses_by_session(group)
+        row = {"Student ID": student_id, "Full name": group["full_name"].iloc[0]}
+        for session_id, label in zip(session_ids, labels):
+            row[label] = REGISTER_LETTERS[statuses.get(session_id)]
+
+        # Only the shown sessions count, so a week's register has that week's totals.
+        shown = group[group["session_id"].isin(session_ids)]
+        present, late, excused, absent, unknown = count_statuses(shown)
+        rates = calculate_rates(present, late, excused, absent, unknown)
+        row[PRESENT] = present
+        row[LATE] = late
+        row[EXCUSED] = excused
+        row[ABSENT] = absent
+        row[UNKNOWN] = unknown
+        row["Rate"] = format_rate(rates["attendance_rate"])
+        row["Deducted"] = calculate_deduction(late, absent, late_deduction, absent_deduction)
+        rows.append(row)
+
+    columns = (["Student ID", "Full name"] + labels
+               + [PRESENT, LATE, EXCUSED, ABSENT, UNKNOWN, "Rate", "Deducted"])
+    return pd.DataFrame(rows, columns=columns)
+
+
+# ---------- Block -> Course filter (FR-30) ----------
+
+def filter_records_by_courses(frame, course_codes, start_date, end_date):
+    """Return the rows of some courses between two dates, both included (FR-30).
+
+    Used when a block is chosen with "All courses": only that block's courses count.
+    """
+    keep = (frame["session_date"] >= start_date) & (frame["session_date"] <= end_date)
+    keep = keep & frame["course_code"].isin(course_codes)
+    return frame[keep].reset_index(drop=True)
+
+
+def choose_filter_period(frame, block_period, course_period):
+    """Return the default (start, end) of the date filter (FR-30).
+
+    A chosen course's period wins, then a chosen block's period, then the first and
+    last session dates. A period is (start, end) or None; a side that is None in a
+    course period falls back to the block, then to the session dates.
+    """
+    earliest, latest = get_date_bounds(frame)
+    start = earliest
+    end = latest
+
+    if block_period is not None:
+        start, end = block_period
+
+    if course_period is not None:
+        if course_period[0] is not None:
+            start = course_period[0]
+        if course_period[1] is not None:
+            end = course_period[1]
+
+    return start, end

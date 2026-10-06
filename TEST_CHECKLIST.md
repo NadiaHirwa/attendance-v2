@@ -3,7 +3,7 @@
 **Before every section:** run `.venv\Scripts\python seed_demo.py`, restart Streamlit, refresh the browser.
 Every row starts from the seed data unless it says otherwise.
 
-✔ = confirmed by running the code (on a copy of the database or by an automated test). Run `.venv\Scripts\python -m unittest`: **215 tests, all OK**.
+✔ = confirmed by running the code (on a copy of the database or by an automated test). Run `.venv\Scripts\python -m unittest`: **234 tests, all OK**.
 
 Dates are shown as **DD/MM/YYYY** everywhere on screen and in downloads (BR-23).
 
@@ -171,8 +171,10 @@ Columns: `course_code, date, student_id, full_name, status`, optional `type` (Cl
 
 | # | Do | Expected |
 |---|---|---|
-| 9.1 | All courses, full range | ✔ Students 12, Sessions 50, **477 / 10 / 4 / 10 / 4, 97.99%, 99.21%**. Range 07/09/2026 to 25/09/2026. |
-| 9.2 | Course PY101 | ✔ **177 / 5 / 1 / 7 / 2, 96.30%, 98.96%**, 17 sessions. |
+| 9.1 | All blocks, all courses, full range | ✔ Students 12, Sessions 50, **477 / 10 / 4 / 10 / 4, 97.99%, 99.21%**. Range 07/09/2026 to 25/09/2026. Caption "Showing: All blocks, All courses, from 07/09/2026 to 25/09/2026." |
+| 9.1b | Block → B1-2627 | ✔ The Course box lists only DS102, MA103 and PY101; the range is the block's period. With a second block, its courses don't appear here. |
+| 9.2 | B1-2627 → PY101 | ✔ **177 / 5 / 1 / 7 / 2, 96.30%, 98.96%**, 17 sessions. Caption "Showing: B1-2627, PY101, from 07/09/2026 to 25/09/2026." |
+| 9.2b | Back to All blocks | The Course box returns to "All courses" and the range to all session dates. |
 | 9.3 | Date range with no sessions | Info message, no empty charts. |
 | 9.4 | Only a start date picked | "Choose an end date" message. |
 | 9.5 | Rate chart | One bar per session, date order, coloured by course, 0 to 100 axis. Labels like "07/09 PY101", "10/09 PY101-T1". |
@@ -197,6 +199,12 @@ Columns: `course_code, date, student_id, full_name, status`, optional `type` (Cl
 | 10.4c | Deductions export → DS102 | ✔ 008: Not recorded **1**, Deducted **0** (missing records never deduct). |
 | 10.5 | Student 010 (late joiner) | ✔ 33 expected: 32 Present, 1 Absent, **96.97%**. "Enrolled from 14/09/2026"; the history starts on 14/09. |
 | 10.6 | Student 012 (early leaver) | ✔ 21 expected: 20 Present, 1 Late, 100.00%. "Enrolled until 18/09/2026". |
+| 10.4d | **Class register** → B1-2627 → PY101 | ✔ One row per student (sorted by ID); columns "Mon 07/09" … with "Tut 10/09" and "Tut 19/09" in date order; cells P / L / E / A / ?; then Present, Late, Excused, Absent, Unknown, Rate, Deducted. 002: **70.59%, 12**. |
+| 10.4e | Register: 010 and 012 | ✔ 010 (late joiner) is "—" in week 1; 012 (early leaver) is "—" after 18/09, including the Saturday tutorial. |
+| 10.4f | Register → DS102 | ✔ No "Wed 16/09" column (holiday). |
+| 10.4g | Register → MA103 → Week 3 | ✔ Only 21/09 to 25/09, including "Tut 23/09" and "Tut 23/09 (T2)" (005: E, E). Totals count that week only (002 in PY101 week 3: 3 Absent, 6 deducted). The download equals the table. |
+| 10.4h | Student 002 → **Weekly view** → PY101 | ✔ Week 1: ✅ ❌ 🕐 ✅ ✅, tutorials "10/09 ✅"; week 2: ✅ ❌ ✅ 🕐 ✅, "19/09 ✅"; week 3: ❌ ❌ ❌ ✅ ✅. Under it: 70.59%, Deducted marks **12**. The CSV uses words (Present, Absent, …, No class). |
+| 10.4i | Weekly view: 010 in PY101, 001 in DS102, 005 in MA103, 003 in PY101 | ✔ 010's week 1 is all "—"; DS102 week 2 Wednesday is "—" (holiday); MA103 week 3 tutorials "23/09 📝, 23/09 (T2) 📝"; 003's Wed 16/09 is ❔. |
 | 10.7 | Student 003 + course DS102 | Info message (003 isn't in DS102). |
 | 10.8 | Change filters while a student is selected | The report follows the filters. |
 

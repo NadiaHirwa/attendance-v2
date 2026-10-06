@@ -25,6 +25,8 @@ STATUS_COLORS = ["#0072B2", "#56B4E9", "#CC79A7", "#E69F00", "#999999"]
 # Width in pixels, so the longest import reasons fit without being cut off.
 REASON_COLUMN_WIDTH = 1500
 ALL_STUDENTS = "All students"
+ALL_BLOCKS = "All blocks"
+ALL_WEEKS = "All weeks"
 # Every date input shows dates as DD/MM/YYYY, like the rest of the app (BR-23).
 DATE_INPUT_FORMAT = "DD/MM/YYYY"
 NO_COURSES_MESSAGE = "No courses yet. Create a course first."
@@ -1512,8 +1514,17 @@ def show_import_tab(connection):
 
 # ---------- FR-12: filters for the Dashboard and Reports ----------
 
+def get_filter_course_codes(connection, block_id):
+    """Return the course codes of a block (block_id None: the courses with no block)."""
+    codes = []
+    for course in database.get_courses(connection):
+        if course["block_id"] == block_id:
+            codes.append(course["course_code"])
+    return codes
+
+
 def show_filters(connection):
-    """Show the course and date filters in the sidebar.
+    """Show the Block -> Course -> date range filters in the sidebar (FR-30).
 
     Returns (filtered records, text describing the filters). The records are None
     when there is nothing to show yet; the text then explains why.
@@ -1525,23 +1536,39 @@ def show_filters(connection):
     if earliest is None:
         return None, NO_DATA_MESSAGE
 
+    # Block: "All blocks", each block, and "No block" for courses of an older database.
+    block_options = {ALL_BLOCKS: ALL_BLOCKS}
+    block_options.update(get_block_choices(connection))
+    if get_filter_course_codes(connection, None):
+        block_options[NO_BLOCK_LABEL] = None
+    block_label = st.sidebar.selectbox("Block", list(block_options), key="filter_block")
+    block_id = block_options[block_label]
+
+    # Course: only the chosen block's courses. The key includes the block, so the
+    # Course box starts again at "All courses" when the block changes.
     course_options = {analytics.ALL_COURSES: analytics.ALL_COURSES}
-    course_options.update(get_course_choices(connection))
-    course_label = st.sidebar.selectbox("Course", list(course_options))
+    for course in database.get_courses(connection):
+        if block_id == ALL_BLOCKS or course["block_id"] == block_id:
+            course_options[make_course_label(course)] = course["course_code"]
+    course_label = st.sidebar.selectbox(
+        "Course", list(course_options), key=f"filter_course_{block_id}"
+    )
     course_code = course_options[course_label]
 
-    # One course: the range starts as that course's period (FR-25).
-    course_start = None
-    course_end = None
+    # The date range starts as the course's period, else the block's, else all dates.
+    block_period = None
+    if block_id not in (ALL_BLOCKS, None):
+        block = database.get_block(connection, block_id)
+        block_period = (block["start_date"], block["end_date"])
+    course_period = None
     if course_code != analytics.ALL_COURSES:
         course = database.get_course(connection, course_code)
-        course_start = course["start_date"]
-        course_end = course["end_date"]
-    default_start, default_end = analytics.get_default_date_range(
-        all_records, course_code, course_start, course_end
+        course_period = (course["start_date"], course["end_date"])
+    default_start, default_end = analytics.choose_filter_period(
+        all_records, block_period, course_period
     )
 
-    # No key: when the course changes, the default changes and the widget starts again.
+    # No key: when the default changes, the widget starts again with the new range.
     chosen_dates = st.sidebar.date_input(
         "Date range",
         value=(date.fromisoformat(default_start), date.fromisoformat(default_end)),
@@ -1554,10 +1581,16 @@ def show_filters(connection):
     start_date = chosen_dates[0].isoformat()
     end_date = chosen_dates[1].isoformat()
 
-    filtered = analytics.filter_records(all_records, course_code, start_date, end_date)
+    if course_code == analytics.ALL_COURSES and block_id != ALL_BLOCKS:
+        filtered = analytics.filter_records_by_courses(
+            all_records, get_filter_course_codes(connection, block_id), start_date, end_date
+        )
+    else:
+        filtered = analytics.filter_records(all_records, course_code, start_date, end_date)
+
     filter_text = (
-        f"Showing: {course_code}, from {validation.format_date(start_date)} "
-        f"to {validation.format_date(end_date)}."
+        f"Showing: {block_label.split(' - ')[0]}, {course_code}, "
+        f"from {validation.format_date(start_date)} to {validation.format_date(end_date)}."
     )
     return filtered, filter_text
 
@@ -1756,13 +1789,15 @@ def show_reports_tab(connection, filtered_records, filter_text):
     student_label = st.selectbox("Student", options, key="report_student")
 
     if student_label == ALL_STUDENTS:
-        show_all_students_report(filtered_records, settings)
+        show_all_students_report(connection, filtered_records, settings)
     else:
         student_id = student_choices[student_label]
-        show_single_student_report(student_id, student_label, filtered_records, settings)
+        show_single_student_report(
+            connection, student_id, student_label, filtered_records, settings
+        )
 
 
-def show_all_students_report(filtered_records, settings):
+def show_all_students_report(connection, filtered_records, settings):
     """Show the overall numbers, the per-student summary with deducted marks, the
     attendance records and the deductions export (FR-16, FR-29)."""
     st.subheader("All students")
@@ -1781,6 +1816,7 @@ def show_all_students_report(filtered_records, settings):
     show_table_with_download(attendance_report, "attendance_report.csv", "download_attendance")
 
     show_deductions_export(filtered_records, settings)
+    show_class_register(connection, settings)
 
 
 def show_deductions_export(filtered_records, settings):
@@ -1824,7 +1860,8 @@ def show_summary_metrics(records, settings=None):
             rate_columns[3].metric("Note", flag)
 
 
-def show_single_student_report(student_id, student_label, filtered_records, settings):
+def show_single_student_report(connection, student_id, student_label, filtered_records,
+                                settings):
     """Show one student's numbers, courses and session history, using the filters (FR-19)."""
     st.subheader(f"Report for {student_label}")
 
@@ -1853,6 +1890,103 @@ def show_single_student_report(student_id, student_label, filtered_records, sett
     st.markdown("**Session history**")
     history = analytics.build_student_history(student_records)
     show_table_with_download(history, f"student_{student_id}_history.csv", "download_history")
+
+    show_weekly_view(connection, student_id, settings)
+
+
+# ---------- FR-27: weekly view ----------
+
+def show_weekly_view(connection, student_id, settings):
+    """Show one student's week-by-week grid for one of their courses (FR-27).
+
+    The grid covers the whole course, not the sidebar dates, so every week is complete.
+    """
+    st.markdown("**Weekly view**")
+
+    course_choices = get_student_course_choices(connection, student_id)
+    if not course_choices:
+        st.info("This student is not enrolled in any course.")
+        return
+
+    course_label = st.selectbox(
+        "Course", list(course_choices), key=f"weekly_course_{student_id}"
+    )
+    course_code = course_choices[course_label]
+    course = database.get_course(connection, course_code)
+    sessions = database.get_sessions_for_course(connection, course_code)
+    if not sessions:
+        st.info(f"{course_code} has no class days or tutorials.")
+        return
+
+    records = analytics.build_records_frame(database.get_expected_records(connection))
+    records = analytics.filter_student(records, student_id)
+    records = records[records["course_code"] == course_code]
+
+    grid = analytics.build_weekly_view(
+        sessions, records, course["start_date"], course["end_date"], analytics.WEEKLY_SYMBOLS
+    )
+    st.dataframe(grid, hide_index=True, width="stretch")
+    st.caption(
+        "✅ Present, 🕐 Late, 📝 Excused, ❌ Absent, ❔ Not recorded, "
+        "— no class (removed day, or outside the student's enrollment period)."
+    )
+
+    show_summary_metrics(records, settings)
+
+    # The download uses plain words instead of symbols, so it opens well in a spreadsheet.
+    words_grid = analytics.build_weekly_view(
+        sessions, records, course["start_date"], course["end_date"], analytics.WEEKLY_WORDS
+    )
+    st.download_button(
+        "Download as CSV",
+        data=words_grid.to_csv(index=False),
+        file_name=f"weekly_{student_id}_{course_code}.csv",
+        mime="text/csv",
+        key=f"download_weekly_{student_id}_{course_code}",
+    )
+
+
+# ---------- FR-28: class register ----------
+
+def show_class_register(connection, settings):
+    """Show the class register of one course, for all weeks or one week (FR-28)."""
+    st.markdown("**Class register**")
+
+    course_code = choose_course(connection, "register")
+    if course_code is None:
+        return
+
+    course = database.get_course(connection, course_code)
+    sessions = database.get_sessions_for_course(connection, course_code)
+    if not sessions:
+        st.info(f"{course_code} has no class days or tutorials.")
+        return
+
+    week_labels = analytics.list_week_labels(sessions, course["start_date"], course["end_date"])
+    week_label = st.selectbox(
+        "Week", [ALL_WEEKS] + week_labels, key=f"register_week_{course_code}"
+    )
+    week = None
+    if week_label != ALL_WEEKS:
+        week = week_labels.index(week_label) + 1
+
+    records = analytics.build_records_frame(database.get_expected_records(connection))
+    records = records[records["course_code"] == course_code]
+    if records.empty:
+        st.info(f"No students are enrolled in {course_code} yet.")
+        return
+
+    register = analytics.build_class_register(
+        sessions, records, settings["late"], settings["absent"], week
+    )
+    file_name = f"register_{course_code}.csv"
+    if week is not None:
+        file_name = f"register_{course_code}_week{week}.csv"
+    show_table_with_download(register, file_name, f"download_register_{course_code}")
+    st.caption(
+        "P Present, L Late, E Excused, A Absent, ? not recorded, — outside the student's "
+        f"enrollment period. {describe_deduction_rule(settings)}"
+    )
 
 
 # ---------- Tabs ----------
