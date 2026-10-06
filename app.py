@@ -115,21 +115,10 @@ def show_enrollment_period_inputs(course, start_value, end_value, key):
         "Enrolled until", value=end_value, min_value=course_start, max_value=course_end,
         format=DATE_INPUT_FORMAT, key=f"{key}_until",
     )
-    st.caption("Leave the full course period unless the student joins late or leaves early.")
+    st.caption(
+        "Use this only when a student joins after the course starts or leaves before it ends."
+    )
     return to_text_or_none(start), to_text_or_none(end)
-
-
-def default_enrollment_start(course):
-    """Return the default 'Enrolled from': the course start, or today if it has none."""
-    course_start = to_date_or_none(course["start_date"])
-    if course_start is not None:
-        return course_start
-
-    # No course start: today, but never after the course's end.
-    course_end = to_date_or_none(course["end_date"])
-    if course_end is not None and date.today() > course_end:
-        return course_end
-    return date.today()
 
 
 def describe_enrollment_dates(start_date, end_date):
@@ -266,9 +255,10 @@ def show_add_student(connection):
 # ---------- FR-05: enroll a student in a course ----------
 
 def show_enroll_student(connection):
-    """Enroll a student in a course, with dates inside the course period (FR-05, BR-17).
+    """Enroll a student in a course for the full course period (FR-05).
 
-    Not inside st.form, so the dates change as soon as another course is chosen.
+    The enrollment dates are stored as NULL, so they follow the course (BR-17).
+    A late start or early leave is set afterwards in Edit & Delete.
     """
     st.subheader("Enroll a student in a course")
 
@@ -289,14 +279,6 @@ def show_enroll_student(connection):
     course_code = course_choices[course_label]
     course = database.get_course(connection, course_code)
 
-    # The key includes the course, so each course starts with its own default dates.
-    start_date, end_date = show_enrollment_period_inputs(
-        course,
-        start_value=default_enrollment_start(course),
-        end_value=to_date_or_none(course["end_date"]),
-        key=f"enroll_{course_code}",
-    )
-
     if not st.button("Enroll", key="enroll_button"):
         return
 
@@ -304,15 +286,10 @@ def show_enroll_student(connection):
         st.error(validation.ALREADY_ENROLLED_ERROR.format(student_id, course_code))
         return
 
-    try:
-        database.enroll_student(connection, student_id, course_code, start_date, end_date)
-    except ValueError as error:
-        st.error(str(error))
-        return
-
+    database.enroll_student(connection, student_id, course_code)
+    period = format_course_period(course["start_date"], course["end_date"])
     st.success(
-        f"Student {student_id} enrolled in {course_code} "
-        f"{describe_enrollment_dates(start_date, end_date)}."
+        f"{student_id} enrolled in {course_code} for the full course period ({period})."
     )
 
 
@@ -416,7 +393,8 @@ def show_save_result(counts):
     if counts["outside_enrollment"] > 0:
         st.error(
             f"{counts['outside_enrollment']} student(s) were not saved: this session's date is "
-            "outside their enrollment dates. Change the dates in Edit & Delete first."
+            "outside their enrollment dates. Change them in Edit & Delete > "
+            "Late start or early leave first."
         )
 
     if counts["not_enrolled"] > 0:
@@ -725,7 +703,7 @@ def show_change_enrollment_dates(connection):
 
     Refused when saved attendance would fall outside the new dates.
     """
-    st.subheader("Change enrollment dates")
+    st.subheader("Late start or early leave")
 
     student_choices = get_student_choices(connection)
     if not student_choices:

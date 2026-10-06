@@ -56,7 +56,7 @@ ENROLLMENT_OUTSIDE_COURSE_ERROR = (
 )
 ENROLLMENTS_OUTSIDE_PERIOD_ERROR = (
     "Cannot change the dates: {} enrollment(s) in {} would fall outside them. "
-    "Change those enrollment dates first or choose a wider period."
+    "Change those in Late start or early leave first, or choose a wider period."
 )
 SESSIONS_OUTSIDE_PERIOD_ERROR = (
     "Cannot change the dates: {} session(s) of {} would fall outside them. "

@@ -59,15 +59,15 @@ The fix prompt that was used is kept at the end of this file for reference.
 | 3.5 | Search name `nadia   HIRWA` | Finds 001 (spaces cleaned, case ignored). |
 | 3.6 | Search name `Nadia` (partial) | **No result.** Search is exact full name only (by design; partial search is Future Work). |
 | 3.7 | Add `013` / `Emile Uwase` (the form has only ID and name) | ✔ "Student 013 - Emile Uwase added. Enroll them in a course below." Search for 013 shows **Not enrolled**. |
-| 3.7b | Enroll a student in a course: 013 → PY101, dates left as they are | ✔ The dates start as PY101's period (2026-09-07 to 2026-12-18) and cannot go outside it. Success. |
+| 3.7b | Enroll a student in a course: 013 → PY101 | ✔ The form has only Student and Course. "013 enrolled in PY101 for the full course period (2026-09-07 to 2026-12-18)." |
 | 3.8 | Add `013` again with another name | Error: ID already used. |
 | 3.9 | Add `014` / `NADIA HIRWA` | **Warning** (same name as 001). Tick the box, submit again → saved, with no course yet. |
 | 3.10 | Names `-Nadia`, `Nadia-`, `Jean--Paul`, `Jean - Paul`, `O''Neil`, `Nadia123`, `@`, spaces only | Each rejected. |
 | 3.11 | Name `O’Neil` (curly apostrophe) | Saved as `O'Neil`. |
 | 3.12 | Name `Émile` | Accepted. |
 | 3.13 | Name with 51 letters | Rejected. 50 is accepted. |
-| 3.14 | Enroll 001 in DS102, dates left at DS102's period | Success. 001 is Unknown for all 4 DS102 sessions (Dashboard Unknown 4 → 8). With "Enrolled from" = `2026-09-23` instead (a late joiner), only W3 and W4 are expected (Unknown 4 → 6). |
-| 3.14b | Switch the Course box from PY101 to DS102 before enrolling | ✔ "Enrolled from" / "Enrolled until" jump to DS102's dates (2026-09-09 / 2026-12-18), and dates outside DS102 cannot be picked. |
+| 3.14 | Enroll 001 in DS102 | Success, for the full course period. 001 is Unknown for all 4 DS102 sessions (Dashboard Unknown 4 → 8). |
+| 3.14b | Then Edit & Delete → **Late start or early leave**: 001 in DS102, "Enrolled from" `2026-09-23` | A late joiner: only W3 and W4 are expected now (Dashboard Unknown 8 → 6). |
 | 3.15 | Enroll 001 in DS102 again | Error: already enrolled. |
 | 3.16 | Can I add a student without a course? | **Yes.** Add Student only saves the ID and name. Enroll them afterwards with "Enroll a student in a course", the only manual way to enroll. |
 | 3.17 | Can I edit a name, delete a student, or un-enroll? | **Yes**, in Manage → **Edit & Delete** (see section 11). The student ID never changes. |
@@ -209,11 +209,11 @@ Run `seed_demo.py` before this section; each row starts from the seed data.
 | 11.11 | Un-enroll 012 from DS102 | ✔ 3 attendance records (DS102-W3 was never recorded), 1 enrollment. |
 | 11.12 | Delete student 004 | ✔ Preview: 8 attendance records, 2 enrollments, 1 student. 004 disappears from every list. |
 | 11.13 | After 11.12, add a new student `004` | ✔ Allowed. The new 004 has no old records and no course until enrolled. |
-| 11.19 | Change enrollment dates: 001 in PY101, start `2026-09-14` | ✔ Refused: 1 saved record (PY101-W1) would fall outside. |
-| 11.20 | Change enrollment dates: 010 in PY101, end `2026-09-21` | ✔ Allowed. 010 is no longer expected at PY101-W4: Dashboard Unknown 4 → 3, completeness 96.00%. |
-| 11.21 | Add student 013, enroll in PY101 from `2026-09-21`, then Record Attendance → PY101-W1 | ✔ 013 is not listed at W1 (listed at W3 and W4). Dashboard Unknown 4 → 6. |
-| 11.24 | Change enrollment dates: 013 → the Course box | ✔ Lists only 013's courses, with full labels. The dates are pre-filled (a date not set shows the course's) and limited to the course period. |
-| 11.25 | Enroll 013 in DS102 until `2026-11-30`, then change DS102 to end `2026-11-01` | ✔ Refused: "1 enrollment(s) in DS102 would fall outside them." |
+| 11.19 | Late start or early leave: 001 in PY101, start `2026-09-14` | ✔ Refused: 1 saved record (PY101-W1) would fall outside. |
+| 11.20 | Late start or early leave: 010 in PY101, end `2026-09-21` | ✔ Allowed. 010 is no longer expected at PY101-W4: Dashboard Unknown 4 → 3, completeness 96.00%. |
+| 11.21 | Add student 013, enroll in PY101, then Late start or early leave: start `2026-09-21`; Record Attendance → PY101-W1 | 013 is not listed at W1 (listed at W3 and W4). Dashboard Unknown 4 → 6. |
+| 11.24 | Late start or early leave: 013 → the Course box | ✔ Lists only 013's courses, with full labels. The dates are pre-filled (a date not set shows the course's) and limited to the course period. The caption says to use it only for a late start or an early leave. |
+| 11.25 | Enroll 013 in DS102, set end `2026-11-30` in Late start or early leave, then change DS102 to end `2026-11-01` | ✔ Refused: "1 enrollment(s) in DS102 would fall outside them." |
 | 11.22 | Change course dates: PY101 start `2026-09-10` | ✔ Refused: 1 session (PY101-W1) would fall outside. |
 | 11.23 | Change course dates: PY101 to `2026-09-01` .. `2027-01-31` | ✔ Allowed. Labels and the Courses list show the new period. Dashboard numbers do not change. |
 | 11.14 | Delete session DS102-W3 | ✔ Preview: 7 attendance records, 1 session. After: Dashboard **57 Present, 8 Absent, 2 Unknown**, 7 sessions. |
@@ -227,7 +227,7 @@ Run `seed_demo.py` before this section; each row starts from the seed data.
 ## Answers to have ready ("why" questions)
 
 - **Why doesn't import create courses?** A typo like `PY11` would silently create a fake course. Courses are created on purpose.
-- **Is a new student Unknown for old sessions?** Only if you enroll them for those dates. Each enrollment has an optional start and end date (BR-15), inside the course period (BR-17), and a student is only expected at sessions inside those dates. The Enroll form starts with the full course period; move "Enrolled from" later for a late joiner. An import starts a new enrollment at the student's earliest session in the file. Old enrollments have no dates, so they count from the first session, as before.
+- **Is a new student Unknown for old sessions?** Only if you enroll them for those dates. Each enrollment has an optional start and end date (BR-15), inside the course period (BR-17), and a student is only expected at sessions inside those dates. Enrolling always covers the full course period; for a late joiner, set "Enrolled from" afterwards in Edit & Delete → Late start or early leave. An import starts a new enrollment at the student's earliest session in the file. Old enrollments have no dates, so they count from the first session, as before.
 - **Why skip duplicates but reject conflicts?** A duplicate changes nothing, so it's safe to skip. A conflict means one of the two values is wrong, so a person must decide. The system never overwrites silently.
 - **Why does a new session lower completeness?** Every enrolled student is expected. If the file lists 3 of 10, 7 really are unrecorded.
 - **Why "below" is strictly less than?** Someone exactly at the threshold has met it.
