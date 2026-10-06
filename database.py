@@ -174,6 +174,26 @@ def get_course_name(connection, course_code):
     return row["course_name"]
 
 
+def count_enrollments_outside_period(connection, course_code, start_date, end_date):
+    """Return how many enrollments of a course have a date outside new course dates (BR-17).
+
+    Enrollment dates that are None follow the course, so they never fall outside.
+    """
+    return count_rows(
+        connection,
+        """
+        SELECT COUNT(*) FROM enrollments
+        WHERE course_code = ?
+          AND ((? IS NOT NULL AND start_date IS NOT NULL AND start_date < ?)
+               OR (? IS NOT NULL AND start_date IS NOT NULL AND start_date > ?)
+               OR (? IS NOT NULL AND end_date IS NOT NULL AND end_date > ?)
+               OR (? IS NOT NULL AND end_date IS NOT NULL AND end_date < ?))
+        """,
+        (course_code, start_date, start_date, end_date, end_date,
+         end_date, end_date, start_date, start_date),
+    )
+
+
 def get_courses(connection):
     """Return all courses with their dates, sorted by code."""
     return connection.execute(
@@ -220,12 +240,36 @@ def find_students_by_name(connection, full_name):
     return matches
 
 
+def check_enrollment_dates(connection, course_code, start_date, end_date):
+    """Return the dates to store for an enrollment, or raise ValueError if they break BR-17.
+
+    The enrollment must be inside its course period, with the start on or before the end.
+    A date equal to the course's is stored as None, so it follows the course later.
+    """
+    course = get_course(connection, course_code)
+    course_start = None
+    course_end = None
+    if course is not None:
+        course_start = course["start_date"]
+        course_end = course["end_date"]
+
+    if not validation.is_enrollment_in_course_period(
+        start_date, end_date, course_start, course_end
+    ):
+        period = validation.describe_course_period(course_start, course_end)
+        raise ValueError(validation.ENROLLMENT_OUTSIDE_COURSE_ERROR.format(course_code, period))
+
+    return validation.simplify_enrollment_dates(start_date, end_date, course_start, course_end)
+
+
 def enroll_student(connection, student_id, course_code, start_date=None, end_date=None):
     """Enroll a student in a course. Does nothing if already enrolled.
 
     start_date and end_date are 'YYYY-MM-DD' text or None (BR-15):
     None as start means from the course's first session, None as end means still enrolled.
+    Raises ValueError if the dates are not inside the course period (BR-17).
     """
+    start_date, end_date = check_enrollment_dates(connection, course_code, start_date, end_date)
     connection.execute(
         """
         INSERT OR IGNORE INTO enrollments (student_id, course_code, start_date, end_date)
@@ -249,7 +293,11 @@ def get_enrollment(connection, student_id, course_code):
 
 
 def update_enrollment_dates(connection, student_id, course_code, start_date, end_date):
-    """Change the start and end dates of an existing enrollment (FR-24)."""
+    """Change the start and end dates of an existing enrollment (FR-24).
+
+    Raises ValueError if the dates are not inside the course period (BR-17).
+    """
+    start_date, end_date = check_enrollment_dates(connection, course_code, start_date, end_date)
     connection.execute(
         """
         UPDATE enrollments SET start_date = ?, end_date = ?
@@ -290,10 +338,10 @@ def is_enrolled(connection, student_id, course_code):
 
 
 def get_student_courses(connection, student_id):
-    """Return the courses a student is enrolled in."""
+    """Return the courses a student is enrolled in, with the course dates."""
     return connection.execute(
         """
-        SELECT courses.course_code, courses.course_name
+        SELECT courses.course_code, courses.course_name, courses.start_date, courses.end_date
         FROM enrollments
         JOIN courses ON courses.course_code = enrollments.course_code
         WHERE enrollments.student_id = ?

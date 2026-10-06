@@ -25,6 +25,8 @@ REASON_COLUMN_WIDTH = 1500
 ALL_STUDENTS = "All students"
 # A new course's end date starts 16 weeks after its start date (one semester).
 DEFAULT_COURSE_WEEKS = 16
+# Every date input shows dates the same way as the rest of the app.
+DATE_INPUT_FORMAT = "YYYY-MM-DD"
 NO_COURSES_MESSAGE = "No courses yet. Create a course first."
 NO_STUDENTS_MESSAGE = "No students yet. Add a student first."
 NO_DATA_MESSAGE = (
@@ -81,23 +83,52 @@ def get_session_choices(connection, course_code):
     return choices
 
 
-def show_enrollment_date_inputs(key_prefix):
-    """Show 'Enrolled from' and an optional 'Enrolled until' inside a form (BR-15).
+def to_date_or_none(date_text):
+    """Turn 'YYYY-MM-DD' text into a date, or return None when there is no date."""
+    if date_text is None:
+        return None
+    return date.fromisoformat(date_text)
 
-    Returns (start_date, end_date) as 'YYYY-MM-DD' text; end_date is None unless
-    the box is ticked.
+
+def to_text_or_none(chosen_date):
+    """Turn a date from st.date_input into 'YYYY-MM-DD' text, or None when it is empty."""
+    if chosen_date is None:
+        return None
+    return chosen_date.isoformat()
+
+
+def show_enrollment_period_inputs(course, start_value, end_value, key):
+    """Show 'Enrolled from' and 'Enrolled until', limited to the course period (BR-17).
+
+    start_value and end_value are dates or None (an empty input means no limit).
+    Returns (start_date, end_date) as 'YYYY-MM-DD' text or None.
     """
-    start = st.date_input("Enrolled from", value=date.today(), key=f"{key_prefix}_start")
-    has_end = st.checkbox("Set an end date", key=f"{key_prefix}_has_end")
-    end = st.date_input(
-        "Enrolled until (used only if the box above is ticked)",
-        value=date.today(), key=f"{key_prefix}_end",
-    )
+    course_start = to_date_or_none(course["start_date"])
+    course_end = to_date_or_none(course["end_date"])
 
-    end_date = None
-    if has_end:
-        end_date = end.isoformat()
-    return start.isoformat(), end_date
+    start = st.date_input(
+        "Enrolled from", value=start_value, min_value=course_start, max_value=course_end,
+        format=DATE_INPUT_FORMAT, key=f"{key}_from",
+    )
+    end = st.date_input(
+        "Enrolled until", value=end_value, min_value=course_start, max_value=course_end,
+        format=DATE_INPUT_FORMAT, key=f"{key}_until",
+    )
+    st.caption("Leave the full course period unless the student joins late or leaves early.")
+    return to_text_or_none(start), to_text_or_none(end)
+
+
+def default_enrollment_start(course):
+    """Return the default 'Enrolled from': the course start, or today if it has none."""
+    course_start = to_date_or_none(course["start_date"])
+    if course_start is not None:
+        return course_start
+
+    # No course start: today, but never after the course's end.
+    course_end = to_date_or_none(course["end_date"])
+    if course_end is not None and date.today() > course_end:
+        return course_end
+    return date.today()
 
 
 def describe_enrollment_dates(start_date, end_date):
@@ -132,9 +163,10 @@ def show_add_course(connection):
     with st.form("add_course_form", clear_on_submit=True):
         code_text = st.text_input("Course code", placeholder="PY101")
         name_text = st.text_input("Course name", placeholder="Programming with Python")
-        start = st.date_input("Start date", value=date.today())
+        start = st.date_input("Start date", value=date.today(), format=DATE_INPUT_FORMAT)
         end = st.date_input(
-            "End date", value=date.today() + timedelta(weeks=DEFAULT_COURSE_WEEKS)
+            "End date", value=date.today() + timedelta(weeks=DEFAULT_COURSE_WEEKS),
+            format=DATE_INPUT_FORMAT,
         )
         submitted = st.form_submit_button("Create course")
 
@@ -187,22 +219,15 @@ def show_course_list(connection):
     st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
 
 
-# ---------- FR-04: add and enroll a student ----------
+# ---------- FR-04: add a student ----------
 
 def show_add_student(connection):
-    """Show the form to add a student and enroll them in a course (FR-04)."""
+    """Show the form to add a student: details only, no course yet (FR-04)."""
     st.subheader("Add a student")
-
-    course_choices = get_course_choices(connection)
-    if not course_choices:
-        st.info(NO_COURSES_MESSAGE)
-        return
 
     with st.form("add_student_form"):
         id_text = st.text_input("Student ID", placeholder="001")
         name_text = st.text_input("Full name", placeholder="Nadia Hirwa")
-        course_label = st.selectbox("Enroll in course", list(course_choices))
-        start_date, end_date = show_enrollment_date_inputs("add_student")
         confirm_same_name = st.checkbox("I confirm this is a different student with the same name")
         submitted = st.form_submit_button("Add student")
 
@@ -211,11 +236,6 @@ def show_add_student(connection):
 
     student_id = id_text.strip()
     full_name = validation.clean_name(name_text)
-    course_code = course_choices[course_label]
-
-    if not validation.are_enrollment_dates_valid(start_date, end_date):
-        st.error(validation.ENROLLMENT_DATES_ERROR)
-        return
 
     if not validation.is_valid_student_id(student_id):
         st.error(validation.STUDENT_ID_ERROR)
@@ -239,18 +259,17 @@ def show_add_student(connection):
         return
 
     database.add_student(connection, student_id, full_name)
-    database.enroll_student(connection, student_id, course_code, start_date, end_date)
-    st.success(
-        f"Student {student_id} - {full_name} added and enrolled in {course_code} "
-        f"{describe_enrollment_dates(start_date, end_date)}."
-    )
+    st.success(f"Student {student_id} - {full_name} added. Enroll them in a course below.")
 
 
-# ---------- FR-05: enroll an existing student ----------
+# ---------- FR-05: enroll a student in a course ----------
 
 def show_enroll_student(connection):
-    """Show the form to enroll an existing student in another course (FR-05)."""
-    st.subheader("Enroll a student in another course")
+    """Enroll a student in a course, with dates inside the course period (FR-05, BR-17).
+
+    Not inside st.form, so the dates change as soon as another course is chosen.
+    """
+    st.subheader("Enroll a student in a course")
 
     student_choices = get_student_choices(connection)
     course_choices = get_course_choices(connection)
@@ -263,28 +282,37 @@ def show_enroll_student(connection):
         st.info(NO_COURSES_MESSAGE)
         return
 
-    with st.form("enroll_form"):
-        student_label = st.selectbox("Student", list(student_choices))
-        course_label = st.selectbox("Course", list(course_choices))
-        start_date, end_date = show_enrollment_date_inputs("enroll")
-        submitted = st.form_submit_button("Enroll")
-
-    if not submitted:
-        return
-
+    student_label = st.selectbox("Student", list(student_choices), key="enroll_student")
+    course_label = st.selectbox("Course", list(course_choices), key="enroll_course")
     student_id = student_choices[student_label]
     course_code = course_choices[course_label]
+    course = database.get_course(connection, course_code)
 
-    if not validation.are_enrollment_dates_valid(start_date, end_date):
-        st.error(validation.ENROLLMENT_DATES_ERROR)
-    elif database.is_enrolled(connection, student_id, course_code):
+    # The key includes the course, so each course starts with its own default dates.
+    start_date, end_date = show_enrollment_period_inputs(
+        course,
+        start_value=default_enrollment_start(course),
+        end_value=to_date_or_none(course["end_date"]),
+        key=f"enroll_{course_code}",
+    )
+
+    if not st.button("Enroll", key="enroll_button"):
+        return
+
+    if database.is_enrolled(connection, student_id, course_code):
         st.error(validation.ALREADY_ENROLLED_ERROR.format(student_id, course_code))
-    else:
+        return
+
+    try:
         database.enroll_student(connection, student_id, course_code, start_date, end_date)
-        st.success(
-            f"Student {student_id} enrolled in {course_code} "
-            f"{describe_enrollment_dates(start_date, end_date)}."
-        )
+    except ValueError as error:
+        st.error(str(error))
+        return
+
+    st.success(
+        f"Student {student_id} enrolled in {course_code} "
+        f"{describe_enrollment_dates(start_date, end_date)}."
+    )
 
 
 # ---------- FR-06: create a session ----------
@@ -608,11 +636,13 @@ def show_change_course_dates(connection):
         has_start = st.checkbox(
             "Set a start date (otherwise no limit)", value=current_start is not None
         )
-        start = st.date_input("Start date", value=to_date(current_start))
+        start = st.date_input(
+            "Start date", value=to_date(current_start), format=DATE_INPUT_FORMAT
+        )
         has_end = st.checkbox(
             "Set an end date (otherwise no limit)", value=current_end is not None
         )
-        end = st.date_input("End date", value=to_date(current_end))
+        end = st.date_input("End date", value=to_date(current_end), format=DATE_INPUT_FORMAT)
         submitted = st.form_submit_button("Change course dates")
 
     if not submitted:
@@ -640,6 +670,16 @@ def show_change_course_dates(connection):
         st.error(validation.SESSIONS_OUTSIDE_PERIOD_ERROR.format(outside, course_code))
         return
 
+    # BR-17: an enrollment with its own dates must stay inside the course period.
+    enrollments_outside = database.count_enrollments_outside_period(
+        connection, course_code, start_date, end_date
+    )
+    if enrollments_outside > 0:
+        st.error(validation.ENROLLMENTS_OUTSIDE_PERIOD_ERROR.format(
+            enrollments_outside, course_code
+        ))
+        return
+
     database.update_course_dates(connection, course_code, start_date, end_date)
     finish_edit(
         f"{course_code} now runs {validation.describe_course_period(start_date, end_date)}."
@@ -661,15 +701,18 @@ def show_change_enrollment_dates(connection):
     student_label = st.selectbox("Student", list(student_choices), key="dates_student")
     student_id = student_choices[student_label]
 
-    course_codes = []
+    # Only the courses this student is enrolled in, with the full course label.
+    course_choices = {}
     for course in database.get_student_courses(connection, student_id):
-        course_codes.append(course["course_code"])
+        course_choices[make_course_label(course)] = course["course_code"]
 
-    if not course_codes:
+    if not course_choices:
         st.info(f"{student_label} is not enrolled in any course.")
         return
 
-    course_code = st.selectbox("Course", course_codes, key="dates_course")
+    course_label = st.selectbox("Course", list(course_choices), key="dates_course")
+    course_code = course_choices[course_label]
+    course = database.get_course(connection, course_code)
     enrollment = database.get_enrollment(connection, student_id, course_code)
     current_start = enrollment["start_date"]
     current_end = enrollment["end_date"]
@@ -678,46 +721,49 @@ def show_change_enrollment_dates(connection):
         f"{describe_enrollment_dates(current_start, current_end)}."
     )
 
+    # A date that is not set follows the course, so show the course's date instead.
+    start_value = to_date_or_none(current_start)
+    if start_value is None:
+        start_value = to_date_or_none(course["start_date"])
+    end_value = to_date_or_none(current_end)
+    if end_value is None:
+        end_value = to_date_or_none(course["end_date"])
+
     with st.form(f"dates_form_{student_id}_{course_code}"):
-        has_start = st.checkbox(
-            "Set a start date (otherwise from the first session)", value=current_start is not None
+        start_date, end_date = show_enrollment_period_inputs(
+            course, start_value, end_value, key=f"dates_{student_id}_{course_code}"
         )
-        start = st.date_input("Enrolled from", value=to_date(current_start))
-        has_end = st.checkbox(
-            "Set an end date (otherwise still enrolled)", value=current_end is not None
-        )
-        end = st.date_input("Enrolled until", value=to_date(current_end))
         submitted = st.form_submit_button("Change dates")
 
     if not submitted:
         return
 
-    start_date = None
-    if has_start:
-        start_date = start.isoformat()
-    end_date = None
-    if has_end:
-        end_date = end.isoformat()
-
-    if not validation.are_enrollment_dates_valid(start_date, end_date):
-        st.error(validation.ENROLLMENT_DATES_ERROR)
+    if not validation.is_enrollment_in_course_period(
+        start_date, end_date, course["start_date"], course["end_date"]
+    ):
+        period = validation.describe_course_period(course["start_date"], course["end_date"])
+        st.error(validation.ENROLLMENT_OUTSIDE_COURSE_ERROR.format(course_code, period))
         return
 
-    if start_date == current_start and end_date == current_end:
+    # Compare what would be stored: a date equal to the course's is stored as None.
+    new_start, new_end = validation.simplify_enrollment_dates(
+        start_date, end_date, course["start_date"], course["end_date"]
+    )
+    if new_start == current_start and new_end == current_end:
         st.info(validation.NO_CHANGE_MESSAGE.format("dates"))
         return
 
     outside = database.count_records_outside_window(
-        connection, student_id, course_code, start_date, end_date
+        connection, student_id, course_code, new_start, new_end
     )
     if outside > 0:
         st.error(validation.RECORDS_OUTSIDE_DATES_ERROR.format(outside, student_id, course_code))
         return
 
-    database.update_enrollment_dates(connection, student_id, course_code, start_date, end_date)
+    database.update_enrollment_dates(connection, student_id, course_code, new_start, new_end)
     finish_edit(
         f"{student_id} is now enrolled in {course_code} "
-        f"{describe_enrollment_dates(start_date, end_date)}."
+        f"{describe_enrollment_dates(new_start, new_end)}."
     )
 
 
@@ -781,15 +827,16 @@ def show_unenroll_student(connection):
     student_label = st.selectbox("Student", list(student_choices), key="unenroll_student")
     student_id = student_choices[student_label]
 
-    course_codes = []
+    course_choices = {}
     for course in database.get_student_courses(connection, student_id):
-        course_codes.append(course["course_code"])
+        course_choices[make_course_label(course)] = course["course_code"]
 
-    if not course_codes:
+    if not course_choices:
         st.info(f"{student_label} is not enrolled in any course.")
         return
 
-    course_code = st.selectbox("Course", course_codes, key="unenroll_course")
+    course_label = st.selectbox("Course", list(course_choices), key="unenroll_course")
+    course_code = course_choices[course_label]
     counts = database.count_unenroll(connection, student_id, course_code)
 
     st.warning(
@@ -1167,6 +1214,7 @@ def show_filters(connection):
     chosen_dates = st.sidebar.date_input(
         "Date range",
         value=(date.fromisoformat(default_start), date.fromisoformat(default_end)),
+        format=DATE_INPUT_FORMAT,
     )
     # While the user is picking, the range has only a start date.
     if len(chosen_dates) != 2:

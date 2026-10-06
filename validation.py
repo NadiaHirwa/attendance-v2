@@ -48,6 +48,14 @@ COURSE_DATES_ERROR = (
 # {} are the course code and describe_course_period(), e.g. "from 2026-09-07 to 2026-12-18".
 SESSION_OUTSIDE_COURSE_ERROR = "{} runs {}. Choose a date in that period."
 ROW_OUTSIDE_COURSE_ERROR = "{} runs {}, not on {}."
+ENROLLMENT_OUTSIDE_COURSE_ERROR = (
+    "Invalid enrollment dates. {} runs {}. The enrollment must be inside that period, "
+    "with the start on or before the end."
+)
+ENROLLMENTS_OUTSIDE_PERIOD_ERROR = (
+    "Cannot change the dates: {} enrollment(s) in {} would fall outside them. "
+    "Change those enrollment dates first or choose a wider period."
+)
 SESSIONS_OUTSIDE_PERIOD_ERROR = (
     "Cannot change the dates: {} session(s) of {} would fall outside them. "
     "Delete those sessions first or choose a wider period."
@@ -258,6 +266,39 @@ def are_period_dates_valid(start_date, end_date):
 def are_enrollment_dates_valid(start_date, end_date):
     """Return True unless both dates are set and the end is before the start (BR-15)."""
     return are_period_dates_valid(start_date, end_date)
+
+
+def is_enrollment_in_course_period(start_date, end_date, course_start, course_end):
+    """Return True if an enrollment period fits inside its course period (BR-17).
+
+    The start must be on or before the end, and each set date must be inside the
+    course period. None means no limit, for the enrollment and for the course.
+    """
+    if not are_period_dates_valid(start_date, end_date):
+        return False
+
+    if start_date is not None:
+        if not is_date_in_period(start_date, course_start, course_end):
+            return False
+
+    if end_date is not None:
+        if not is_date_in_period(end_date, course_start, course_end):
+            return False
+
+    return True
+
+
+def simplify_enrollment_dates(start_date, end_date, course_start, course_end):
+    """Return the enrollment dates to store: a date equal to the course's becomes None (BR-17).
+
+    None means "follow the course", so the enrollment moves with the course
+    if the course dates change later.
+    """
+    if start_date is not None and start_date == course_start:
+        start_date = None
+    if end_date is not None and end_date == course_end:
+        end_date = None
+    return start_date, end_date
 
 
 def describe_course_period(start_date, end_date):
