@@ -137,7 +137,7 @@ STATUS_CONFLICT_SAVED_ERROR = (
     "The saved record is kept; correct it in Manage Attendance."
 )
 STATUS_CONFLICT_FILE_ERROR = (
-    "Student {} is already {} for {} earlier in this file (row {}), not {}. "
+    "Student {} already has {} for {} earlier in this file (row {}), not {}. "
     "The first row is kept."
 )
 SUGGESTION_REASON = ' Suggestion: "{}". Choose it under Suggestions and click Apply suggestions.'

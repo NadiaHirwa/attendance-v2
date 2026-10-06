@@ -465,14 +465,15 @@ def find_session(connection, row, file_tutorials, accepted_keys=()):
 
 
 def describe_row_session(row):
-    """Return the row's session without its ID, like 'PY101 on Tuesday 08/09/2026 (Class)'."""
-    session_type = validation.CLASS
-    if row[TYPE_COLUMN] == validation.TUTORIAL:
-        session_type = f"Tutorial {row['session_id'].split('-')[-1]}"
-    return (
+    """Return the row's session without its ID: 'PY101 on Monday 07/09/2026' for a class,
+    'PY101 on Thursday 10/09/2026 (Tutorial T1)' for a tutorial."""
+    text = (
         f"{row['course_code']} on {validation.weekday_name(row['date'])} "
-        f"{validation.format_date(row['date'])} ({session_type})"
+        f"{validation.format_date(row['date'])}"
     )
+    if row[TYPE_COLUMN] == validation.TUTORIAL:
+        text += f" (Tutorial {row['session_id'].split('-')[-1]})"
+    return text
 
 
 def check_enrollment_dates(connection, row):
@@ -508,16 +509,30 @@ def check_enrollment_dates(connection, row):
 
 
 def check_status(connection, row, file_statuses, accepted_keys):
-    """Compare the row with saved and earlier records for the same student and session.
+    """Compare the row with earlier rows of the file, then with the saved record.
 
     Returns (result, reason, suggestion). The result is 'new', 'duplicate' (IR-07),
-    'conflict' (IR-08) or 'update'. A status that differs from the saved record gets
-    suggestion S4: 'Keep saved' is the default (the row is rejected), and an accepted
-    'Use file' makes the result 'update', so Confirm changes the saved record.
+    'conflict' (IR-08) or 'update'. Earlier rows come first: if the same student and
+    session already appeared in this file (accepted or with a suggestion), a different
+    status is an in-file conflict and the first row is kept, so only that first row
+    can change the saved record. Otherwise, a status that differs from the saved
+    record gets suggestion S4: 'Keep saved' is the default (the row is rejected), and
+    an accepted 'Use file' makes the result 'update', so Confirm changes the record.
     """
     student_id = row["student_id"]
     session_id = row["session_id"]
     status = row["status"]
+
+    pair = (student_id, session_id)
+    if pair in file_statuses:
+        first_status, first_row = file_statuses[pair]
+        if first_status == status:
+            message = validation.DUPLICATE_FILE_REASON.format(first_row)
+            return "duplicate", make_reason(row[ROW_COLUMN], message), None
+        message = validation.STATUS_CONFLICT_FILE_ERROR.format(
+            student_id, first_status, describe_row_session(row), first_row, status
+        )
+        return "conflict", make_reason(row[ROW_COLUMN], message), None
 
     saved_status = database.get_status(connection, student_id, session_id)
     if saved_status is not None:
@@ -535,17 +550,6 @@ def check_status(connection, row, file_statuses, accepted_keys):
         )
         message += validation.SUGGESTION_REASON.format(text)
         return "conflict", make_reason(row[ROW_COLUMN], message), suggestion
-
-    pair = (student_id, session_id)
-    if pair in file_statuses:
-        first_status, first_row = file_statuses[pair]
-        if first_status == status:
-            message = validation.DUPLICATE_FILE_REASON.format(first_row)
-            return "duplicate", make_reason(row[ROW_COLUMN], message), None
-        message = validation.STATUS_CONFLICT_FILE_ERROR.format(
-            student_id, first_status, describe_row_session(row), first_row, status
-        )
-        return "conflict", make_reason(row[ROW_COLUMN], message), None
 
     return "new", None, None
 
@@ -689,6 +693,10 @@ def review_rows(connection, rows, accepted_keys=(), edits=None):
         )
         if suggestion is not None:
             result["suggestions"].append(suggestion)
+            # A row with an S4 suggestion counts as the first row for this student and
+            # session, even when it is not accepted, so a later row cannot take its place.
+            pair = (row["student_id"], row["session_id"])
+            file_statuses.setdefault(pair, (row["status"], row[ROW_COLUMN]))
         if status_result == "conflict":
             result["rejected"].append(reject(raw_row, reason))
             continue

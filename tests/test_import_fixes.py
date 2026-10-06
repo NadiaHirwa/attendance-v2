@@ -301,6 +301,44 @@ class TestSuggestions(FixesTestCase):
         self.assertEqual((row["status"], row["source"]), ("Absent", "file.csv"))
         self.assertEqual(database.get_status(self.connection, "001", "PY101-W2"), "Present")
 
+    def test_two_rows_cannot_both_overwrite_a_saved_record(self):
+        """S4: saved Present; the file has Late (row 2) then Absent (row 3). Earlier rows
+        of the file are checked first, so only row 2 gets S4; row 3 is an in-file conflict.
+        Accepting every suggestion gives one update, to Late."""
+        database.record_attendance(self.connection, "001", "PY101-W1", "Present")
+        lines = [
+            "PY101,07/09/2026,001,Nadia Hirwa,L,",
+            "PY101,07/09/2026,001,Nadia Hirwa,A,",
+        ]
+        first = self.review(lines)
+        self.assertEqual(self.suggestion_keys(first), ["2-S4"])
+        self.assertEqual(first["rejected"][1]["reason"],
+                         "Row 3: Student 001 already has Late for PY101 on Monday 07/09/2026 "
+                         "earlier in this file (row 2), not Absent. The first row is kept.")
+
+        result = self.review(lines, self.suggestion_keys(first))
+        self.assertEqual(self.suggestion_keys(result), ["2-S4"])
+        self.assertEqual(len(result["accepted"]), 1)
+        self.assertTrue(result["accepted"][0]["update"])
+        self.assertEqual(len(result["rejected"]), 1)
+        self.assertIn("(row 2), not Absent. The first row is kept.",
+                      result["rejected"][0]["reason"])
+
+        saved = importer.apply_import(self.connection, result["accepted"], "file.csv")
+        self.assertEqual(saved, 1)
+        self.assertEqual(database.get_status(self.connection, "001", "PY101-W1"), "Late")
+
+    def test_later_row_with_the_same_status_is_a_duplicate(self):
+        """S4: a later row repeating the first row's status is a duplicate, not a second S4."""
+        database.record_attendance(self.connection, "001", "PY101-W1", "Present")
+        result = self.review([
+            "PY101,07/09/2026,001,Nadia Hirwa,L,",
+            "PY101,07/09/2026,001,Nadia Hirwa,Late,",
+        ])
+
+        self.assertEqual(self.suggestion_keys(result), ["2-S4"])
+        self.assertEqual(result["duplicates"][0]["reason"], "Row 3: Repeats row 2.")
+
     def test_suggestions_are_unticked_by_default(self):
         """FR-31: no suggestion is accepted unless its key is given."""
         result = self.review([

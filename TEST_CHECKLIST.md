@@ -3,7 +3,7 @@
 **Before every section:** run `.venv\Scripts\python seed_demo.py`, restart Streamlit, refresh the browser.
 Every row starts from the seed data unless it says otherwise.
 
-✔ = confirmed by running the code (on a copy of the database or by an automated test). Run `.venv\Scripts\python -m unittest`: **292 tests, all OK**.
+✔ = confirmed by running the code (on a copy of the database or by an automated test). Run `.venv\Scripts\python -m unittest`: **294 tests, all OK**.
 
 Dates are shown as **DD/MM/YYYY** everywhere on screen and in downloads (BR-23).
 
@@ -176,10 +176,11 @@ Columns: `course_code, date, student_id, full_name, status`, optional `type` (Cl
 | 8.20 | Row outside the course period | ✔ Rejected: "Row 11: PY101 runs from 07/09/2026 to 25/09/2026, not on 02/10/2026." |
 | 8.21 | Unknown course `BIO200` / status `maybe` / ID `0` | ✔ Rejected (rows 8, 7, 6). Import never creates courses. |
 | 8.22 | One student and session with two statuses in the file | ✔ First row kept, later row rejected (no suggestion). |
+| 8.22b | Saved Present; file rows `L` then `A` for the same student and day → accept all | ✔ Only the first row has S4. The second is rejected: "Student 001 already has Late for PY101 on Monday 07/09/2026 earlier in this file (row 2), not Absent. The first row is kept." Confirm saves one update, to **Late**. |
 | 8.25 | Rejected table: change row 7's status `maybe` to `P` → **Re-check** | ✔ Auto-fixed lists "row 7, status, maybe → P, edited by you: maybe -> P" (plus the P → Present auto-fix: 40). Row 7 moves to **Skipped duplicates** (001 is already Present on 07/09): 6 / 3 / 10. Still nothing saved; the cleaned file has the edited row. Confirm: "Edited by you: 1. Auto-fixes: 40. …" |
 | 8.26 | Re-check, then Apply suggestions (or the reverse) | ✔ Both are kept: edits stay by row number, accepted suggestions stay ticked. **Validate** starts again with neither. |
 | 8.27 | Rejected table: the `row` and `reason` columns | Read-only. |
-| 8.28 | Every import table and reason | ✔ No session IDs: a status conflict names "PY101 on Tuesday 08/09/2026 (Class)". |
+| 8.28 | Every import table and reason | ✔ No session IDs: a status conflict names "PY101 on Tuesday 08/09/2026" (a tutorial adds "(Tutorial T1)"). |
 | 8.23 | Saving fails halfway | Nothing saved (one transaction); an error asks you to validate again. |
 | 8.24 | Download rejected rows / template | CSV with a `reason` column / header-only template with the Version 3 columns. |
 
