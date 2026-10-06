@@ -6,7 +6,7 @@ Starting point is always: **63 Present, 9 Absent, 4 Unknown, 87.50%, 94.74%**.
 ✔ = I already ran this case on a copy of your database, and the expected result below is what the code actually does.
 
 **Seed data, so you know what's there:**
-- Courses: **DS102** (Data Science Basics), **PY101** (Programming with Python)
+- Courses: **DS102** (Data Science Basics, runs 2026-09-09 to 2026-12-18), **PY101** (Programming with Python, runs 2026-09-07 to 2026-12-18)
 - PY101 students: 001 to 010. DS102 students: 004 to 012. (004 to 010 are in both.)
 - Sessions: PY101-W1 to W4 (09-07, 09-14, 09-21, 09-28), DS102-W1 to W4 (09-09, 09-16, 09-23, 09-30)
 - The 4 Unknowns: 003 in PY101-W2, 008 in DS102-W3, 012 in DS102-W3, 010 in PY101-W4
@@ -43,6 +43,10 @@ The fix prompt that was used is kept at the end of this file for reference.
 | 2.4 | Empty course name, or 81+ characters | Rejected. |
 | 2.5 | Two different codes with the **same name** | Allowed. Only the code must be unique. |
 | 2.6 | Can I rename or delete a course? | **Yes**, in Manage → **Edit & Delete** (see section 11). The code never changes; a course can only be deleted when it has no sessions and no students. |
+| 2.7 | Create a course: look at "Start date" and "End date" | ✔ Start defaults to today, end to 16 weeks later. |
+| 2.8 | Create a course with the end **before** the start | ✔ Error: "The end date must be on or after the start date." |
+| 2.9 | Courses sub-tab, below the form | ✔ A list of every course with its start and end date. |
+| 2.10 | Any course dropdown (Record, Sessions, sidebar…) | ✔ Labels show the period: `PY101 - Programming with Python (2026-09-07 to 2026-12-18)`. |
 
 ## 3. Manage → Students (search, add, enroll)
 
@@ -74,7 +78,8 @@ The fix prompt that was used is kept at the end of this file for reference.
 | 4.2 | Create `py101-w5` again | Error: already exists (uppercased). |
 | 4.3 | Same session ID under another course | Error. Session IDs are unique across **all** courses. |
 | 4.4 | Dates `2026-02-30`, `05/10/2026`, `2026-9-5`, empty | Rejected. |
-| 4.5 | Date `2099-01-01` or `1990-01-01` | **Accepted.** There is no future or past check (know this answer). |
+| 4.5 | Date `2099-01-01` or `1990-01-01` for PY101 | ✔ **Refused**: "PY101 runs from 2026-09-07 to 2026-12-18. Choose a date in that period." (A course with no dates would accept them.) |
+| 4.5b | PY101 session on `2026-12-18` (the last day) or `2026-09-07` (the first day) | ✔ Accepted: both end dates are inside the period. |
 | 4.6 | Session `DS102-X` created under PY101 | Accepted. The ID isn't tied to the course name (known limitation). |
 | 4.7 | Two courses, sessions on the **same date** | Both saved. Two separate bars in the charts. |
 
@@ -130,6 +135,7 @@ The fix prompt that was used is kept at the end of this file for reference.
 | 7.13 | Existing student in a course they're **not in yet** | ✔ Enrolled automatically from their earliest session date in the file, so they are Unknown only for that course's **later** sessions without a record. |
 | 7.13b | Row for a student whose enrollment starts later (e.g. enrolled from 2026-09-14, row dated 2026-09-07) | ✔ Rejected: "Student … is enrolled in PY101 from 2026-09-14, not on 2026-09-07." |
 | 7.14 | Unknown course `BIO200` | ✔ Rejected. Courses are never created by import. |
+| 7.14b | PY101 row dated `2027-01-05` (after the course ends) | ✔ Rejected: "Row N: PY101 runs from 2026-09-07 to 2026-12-18, not on 2027-01-05." |
 | 7.15 | Session ID that exists with a different date or course | ✔ Rejected. |
 | 7.16 | Same student twice in the file, different names | ✔ First row kept, later row rejected. |
 | 7.17 | If saving fails halfway | Nothing at all is saved (one transaction), and an error asks you to validate again. |
@@ -142,7 +148,8 @@ The fix prompt that was used is kept at the end of this file for reference.
 | # | Do | Expected |
 |---|---|---|
 | 8.1 | All courses, full date range | Students 12, Sessions 8, Present 63, Absent 9, Unknown 4, 87.50%, 94.74%. |
-| 8.2 | Course PY101 | Only PY101 numbers, the caption says "PY101". |
+| 8.2 | Course PY101 | Only PY101 numbers, the caption says "PY101". The date range jumps to PY101's period, **2026-09-07 to 2026-12-18**. |
+| 8.2b | Back to All courses | The date range goes back to the first and last session dates (2026-09-07 to 2026-09-30). |
 | 8.3 | Date range with no sessions (e.g. one day in August) | Info message, no empty charts. |
 | 8.4 | Pick only a start date | "Choose an end date" message. |
 | 8.5 | Rate chart | One bar per session, date order, coloured by course, 0 to 100 axis, readable labels. |
@@ -198,6 +205,8 @@ Run `seed_demo.py` before this section; each row starts from the seed data.
 | 11.19 | Change enrollment dates: 001 in PY101, start `2026-09-14` | ✔ Refused: 1 saved record (PY101-W1) would fall outside. |
 | 11.20 | Change enrollment dates: 010 in PY101, end `2026-09-21` | ✔ Allowed. 010 is no longer expected at PY101-W4: Dashboard Unknown 4 → 3, completeness 96.00%. |
 | 11.21 | Add student 013 to PY101 from `2026-09-21`, then Record Attendance → PY101-W1 | ✔ 013 is not listed at W1 (listed at W3 and W4). Dashboard Unknown 4 → 6. |
+| 11.22 | Change course dates: PY101 start `2026-09-10` | ✔ Refused: 1 session (PY101-W1) would fall outside. |
+| 11.23 | Change course dates: PY101 to `2026-09-01` .. `2027-01-31` | ✔ Allowed. Labels and the Courses list show the new period. Dashboard numbers do not change. |
 | 11.14 | Delete session DS102-W3 | ✔ Preview: 7 attendance records, 1 session. After: Dashboard **57 Present, 8 Absent, 2 Unknown**, 7 sessions. |
 | 11.15 | Delete course PY101 | ✔ Error: "still has 4 session(s) and 10 enrolled student(s)". Nothing is deleted. |
 | 11.16 | Create course `ML300`, then delete it | ✔ Allowed: 1 course removed. |
@@ -214,7 +223,7 @@ Run `seed_demo.py` before this section; each row starts from the seed data.
 - **Why does a new session lower completeness?** Every enrolled student is expected. If the file lists 3 of 10, 7 really are unrecorded.
 - **Why "below" is strictly less than?** Someone exactly at the threshold has met it.
 - **How is delete made safe?** Every delete shows what will be removed, with counts, and needs a ticked "cannot be undone" box. Each one runs in a single transaction, so it never half-finishes. A course in use cannot be deleted at all.
-- **Why no future-date check?** Not in the frozen rules. Easy to add: a one-line rule in `parse_date`.
+- **Can a session have any date?** No. Each course has a start and end date (BR-16), and a session must fall inside them. A course with no dates (an old database) has no limit. Course dates never change who is expected; that is what enrollment dates do (BR-15).
 
 ---
 

@@ -16,7 +16,9 @@ MANUAL_SOURCE = "manual"
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS courses (
     course_code TEXT PRIMARY KEY,
-    course_name TEXT NOT NULL
+    course_name TEXT NOT NULL,
+    start_date  TEXT,
+    end_date    TEXT
 );
 
 CREATE TABLE IF NOT EXISTS students (
@@ -62,8 +64,25 @@ def get_connection(path=DB_PATH):
 def create_tables(connection):
     """Create all tables if they do not exist yet, and upgrade an older database."""
     connection.executescript(SCHEMA)
+    add_course_date_columns(connection)
     add_enrollment_date_columns(connection)
     connection.commit()
+
+
+def add_course_date_columns(connection):
+    """Add start_date and end_date to courses if an older database lacks them (BR-16).
+
+    Works like add_enrollment_date_columns(): old courses get NULL dates,
+    which means no limit, so they keep working as before.
+    """
+    column_names = []
+    for column in connection.execute("PRAGMA table_info(courses)"):
+        column_names.append(column[1])  # Position 1 of each row is the column name.
+
+    if "start_date" not in column_names:
+        connection.execute("ALTER TABLE courses ADD COLUMN start_date TEXT")
+    if "end_date" not in column_names:
+        connection.execute("ALTER TABLE courses ADD COLUMN end_date TEXT")
 
 
 def add_enrollment_date_columns(connection):
@@ -85,13 +104,53 @@ def add_enrollment_date_columns(connection):
 
 # ---------- Courses ----------
 
-def add_course(connection, course_code, course_name):
-    """Save a new course."""
+def add_course(connection, course_code, course_name, start_date=None, end_date=None):
+    """Save a new course. The dates are 'YYYY-MM-DD' text or None for no limit (BR-16)."""
     connection.execute(
-        "INSERT INTO courses (course_code, course_name) VALUES (?, ?)",
-        (course_code, course_name),
+        """
+        INSERT INTO courses (course_code, course_name, start_date, end_date)
+        VALUES (?, ?, ?, ?)
+        """,
+        (course_code, course_name, start_date, end_date),
     )
     connection.commit()
+
+
+def get_course(connection, course_code):
+    """Return one course row (code, name, start_date, end_date), or None if not saved."""
+    return connection.execute(
+        """
+        SELECT course_code, course_name, start_date, end_date
+        FROM courses WHERE course_code = ?
+        """,
+        (course_code,),
+    ).fetchone()
+
+
+def update_course_dates(connection, course_code, start_date, end_date):
+    """Change the start and end dates of a course (FR-25)."""
+    connection.execute(
+        "UPDATE courses SET start_date = ?, end_date = ? WHERE course_code = ?",
+        (start_date, end_date, course_code),
+    )
+    connection.commit()
+
+
+def count_sessions_outside_period(connection, course_code, start_date, end_date):
+    """Return how many sessions of a course fall outside new course dates.
+
+    A None start or end date means there is no limit on that side.
+    """
+    return count_rows(
+        connection,
+        """
+        SELECT COUNT(*) FROM sessions
+        WHERE course_code = ?
+          AND ((? IS NOT NULL AND session_date < ?)
+               OR (? IS NOT NULL AND session_date > ?))
+        """,
+        (course_code, start_date, start_date, end_date, end_date),
+    )
 
 
 def course_exists(connection, course_code):
@@ -116,9 +175,12 @@ def get_course_name(connection, course_code):
 
 
 def get_courses(connection):
-    """Return all courses sorted by code."""
+    """Return all courses with their dates, sorted by code."""
     return connection.execute(
-        "SELECT course_code, course_name FROM courses ORDER BY course_code"
+        """
+        SELECT course_code, course_name, start_date, end_date
+        FROM courses ORDER BY course_code
+        """
     ).fetchall()
 
 

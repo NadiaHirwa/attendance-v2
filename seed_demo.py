@@ -10,9 +10,10 @@ import os
 import analytics
 import database
 
+# (code, name, start date, end date). Every session below is inside its course's dates.
 COURSES = [
-    ("PY101", "Programming with Python"),
-    ("DS102", "Data Science Basics"),
+    ("PY101", "Programming with Python", "2026-09-07", "2026-12-18"),
+    ("DS102", "Data Science Basics", "2026-09-09", "2026-12-18"),
 ]
 
 STUDENTS = [
@@ -83,8 +84,8 @@ def reset_database(path):
 
 def add_demo_data(connection):
     """Add the courses, students, enrollments and sessions."""
-    for course_code, course_name in COURSES:
-        database.add_course(connection, course_code, course_name)
+    for course_code, course_name, start_date, end_date in COURSES:
+        database.add_course(connection, course_code, course_name, start_date, end_date)
 
     for student_id, full_name in STUDENTS:
         database.add_student(connection, student_id, full_name)

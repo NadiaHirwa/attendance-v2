@@ -42,6 +42,16 @@ NO_CHANGE_MESSAGE = "No change: the new {} is the same as the current one."
 ENROLLMENT_DATES_ERROR = (
     "Invalid enrollment dates. The end date must be on or after the start date."
 )
+COURSE_DATES_ERROR = (
+    "Invalid course dates. The end date must be on or after the start date."
+)
+# {} are the course code and describe_course_period(), e.g. "from 2026-09-07 to 2026-12-18".
+SESSION_OUTSIDE_COURSE_ERROR = "{} runs {}. Choose a date in that period."
+ROW_OUTSIDE_COURSE_ERROR = "{} runs {}, not on {}."
+SESSIONS_OUTSIDE_PERIOD_ERROR = (
+    "Cannot change the dates: {} session(s) of {} would fall outside them. "
+    "Delete those sessions first or choose a wider period."
+)
 ENROLLED_FROM_ERROR = "Student {} is enrolled in {} from {}, not on {}."
 ENROLLED_UNTIL_ERROR = "Student {} was enrolled in {} until {}, not on {}."
 RECORDS_OUTSIDE_DATES_ERROR = (
@@ -217,26 +227,48 @@ def parse_date(date_text):
     return parsed.strftime(DATE_FORMAT)
 
 
-def is_in_enrollment_window(session_date, start_date, end_date):
-    """Return True if a student is expected at a session on session_date (BR-15).
+def is_date_in_period(date_text, start_date, end_date):
+    """Return True if date_text is between start_date and end_date, both included.
 
     All dates are 'YYYY-MM-DD' text, so comparing the text also compares the dates.
     A start_date or end_date of None means there is no limit on that side.
+    Used for enrollment dates (BR-15) and course dates (BR-16).
     """
-    if start_date is not None and session_date < start_date:
+    if start_date is not None and date_text < start_date:
         return False
 
-    if end_date is not None and session_date > end_date:
+    if end_date is not None and date_text > end_date:
         return False
 
     return True
 
 
-def are_enrollment_dates_valid(start_date, end_date):
-    """Return True unless both dates are set and the end is before the start (BR-15)."""
+def is_in_enrollment_window(session_date, start_date, end_date):
+    """Return True if a student is expected at a session on session_date (BR-15)."""
+    return is_date_in_period(session_date, start_date, end_date)
+
+
+def are_period_dates_valid(start_date, end_date):
+    """Return True unless both dates are set and the end is before the start."""
     if start_date is None or end_date is None:
         return True
     return end_date >= start_date
+
+
+def are_enrollment_dates_valid(start_date, end_date):
+    """Return True unless both dates are set and the end is before the start (BR-15)."""
+    return are_period_dates_valid(start_date, end_date)
+
+
+def describe_course_period(start_date, end_date):
+    """Return text like 'from 2026-09-07 to 2026-12-18' for a course's dates (BR-16)."""
+    if start_date is not None and end_date is not None:
+        return f"from {start_date} to {end_date}"
+    if start_date is not None:
+        return f"from {start_date}"
+    if end_date is not None:
+        return f"until {end_date}"
+    return "with no set dates"
 
 
 def normalize_status(status):

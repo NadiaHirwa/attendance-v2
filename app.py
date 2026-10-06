@@ -5,7 +5,7 @@ SQL lives in database.py, and calculations live in analytics.py.
 """
 
 import sqlite3
-from datetime import date
+from datetime import date, timedelta
 
 import altair as alt
 import pandas as pd
@@ -23,6 +23,8 @@ STATUS_COLORS = ["#0072B2", "#E69F00", "#999999"]
 # Width in pixels, so the longest import reasons fit without being cut off.
 REASON_COLUMN_WIDTH = 1500
 ALL_STUDENTS = "All students"
+# A new course's end date starts 16 weeks after its start date (one semester).
+DEFAULT_COURSE_WEEKS = 16
 NO_COURSES_MESSAGE = "No courses yet. Create a course first."
 NO_STUDENTS_MESSAGE = "No students yet. Add a student first."
 NO_DATA_MESSAGE = (
@@ -36,12 +38,28 @@ NO_MATCH_MESSAGE = (
 
 # ---------- Helpers ----------
 
+def format_course_period(start_date, end_date):
+    """Return a course period for labels, like '2026-09-07 to 2026-12-18' (FR-25)."""
+    start_text = start_date
+    if start_date is None:
+        start_text = "no start"
+    end_text = end_date
+    if end_date is None:
+        end_text = "no end"
+    return f"{start_text} to {end_text}"
+
+
+def make_course_label(course):
+    """Return a label like 'PY101 - Programming with Python (2026-09-07 to 2026-12-18)'."""
+    period = format_course_period(course["start_date"], course["end_date"])
+    return f"{course['course_code']} - {course['course_name']} ({period})"
+
+
 def get_course_choices(connection):
-    """Return a dict that maps a label like 'PY101 - Programming' to its course code."""
+    """Return a dict that maps a course label (with its period) to its course code."""
     choices = {}
     for course in database.get_courses(connection):
-        label = f"{course['course_code']} - {course['course_name']}"
-        choices[label] = course["course_code"]
+        choices[make_course_label(course)] = course["course_code"]
     return choices
 
 
@@ -114,6 +132,10 @@ def show_add_course(connection):
     with st.form("add_course_form", clear_on_submit=True):
         code_text = st.text_input("Course code", placeholder="PY101")
         name_text = st.text_input("Course name", placeholder="Programming with Python")
+        start = st.date_input("Start date", value=date.today())
+        end = st.date_input(
+            "End date", value=date.today() + timedelta(weeks=DEFAULT_COURSE_WEEKS)
+        )
         submitted = st.form_submit_button("Create course")
 
     if not submitted:
@@ -121,16 +143,48 @@ def show_add_course(connection):
 
     course_code = validation.normalize_course_code(code_text)
     course_name = validation.clean_course_name(name_text)
+    start_date = start.isoformat()
+    end_date = end.isoformat()
 
     if course_code is None:
         st.error(validation.COURSE_CODE_ERROR)
     elif course_name is None:
         st.error(validation.COURSE_NAME_ERROR)
+    elif not validation.are_period_dates_valid(start_date, end_date):
+        st.error(validation.COURSE_DATES_ERROR)
     elif database.course_exists(connection, course_code):
         st.error(validation.COURSE_EXISTS_ERROR.format(course_code))
     else:
-        database.add_course(connection, course_code, course_name)
-        st.success(f"Course {course_code} - {course_name} created.")
+        database.add_course(connection, course_code, course_name, start_date, end_date)
+        st.success(
+            f"Course {course_code} - {course_name} created, running "
+            f"{validation.describe_course_period(start_date, end_date)}."
+        )
+
+
+def show_course_list(connection):
+    """List every course with its period (FR-25)."""
+    st.subheader("Courses")
+
+    rows = []
+    for course in database.get_courses(connection):
+        start_text = course["start_date"]
+        if start_text is None:
+            start_text = "no start"
+        end_text = course["end_date"]
+        if end_text is None:
+            end_text = "no end"
+        rows.append({
+            "Course": course["course_code"],
+            "Name": course["course_name"],
+            "Start date": start_text,
+            "End date": end_text,
+        })
+
+    if not rows:
+        st.info(NO_COURSES_MESSAGE)
+        return
+    st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
 
 
 # ---------- FR-04: add and enroll a student ----------
@@ -257,10 +311,15 @@ def show_add_session(connection):
     session_id = validation.normalize_session_id(id_text)
     session_date = validation.parse_date(date_text)
 
+    course = database.get_course(connection, course_code)
+
     if session_id is None:
         st.error(validation.SESSION_ID_ERROR)
     elif session_date is None:
         st.error(validation.DATE_ERROR)
+    elif not validation.is_date_in_period(session_date, course["start_date"], course["end_date"]):
+        period = validation.describe_course_period(course["start_date"], course["end_date"])
+        st.error(validation.SESSION_OUTSIDE_COURSE_ERROR.format(course_code, period))
     elif database.get_session(connection, session_id) is not None:
         st.error(validation.SESSION_EXISTS_ERROR.format(session_id))
     else:
@@ -527,6 +586,66 @@ def show_rename_course(connection):
         finish_edit(f"Course {course_code} renamed from {current_name} to {new_name}.")
 
 
+def show_change_course_dates(connection):
+    """Change a course's start and end dates (FR-25).
+
+    Refused when existing sessions would fall outside the new period.
+    """
+    st.subheader("Change course dates")
+
+    course_choices = get_course_choices(connection)
+    if not course_choices:
+        st.info(NO_COURSES_MESSAGE)
+        return
+
+    course_label = st.selectbox("Course", list(course_choices), key="course_dates_course")
+    course_code = course_choices[course_label]
+    course = database.get_course(connection, course_code)
+    current_start = course["start_date"]
+    current_end = course["end_date"]
+
+    with st.form(f"course_dates_form_{course_code}"):
+        has_start = st.checkbox(
+            "Set a start date (otherwise no limit)", value=current_start is not None
+        )
+        start = st.date_input("Start date", value=to_date(current_start))
+        has_end = st.checkbox(
+            "Set an end date (otherwise no limit)", value=current_end is not None
+        )
+        end = st.date_input("End date", value=to_date(current_end))
+        submitted = st.form_submit_button("Change course dates")
+
+    if not submitted:
+        return
+
+    start_date = None
+    if has_start:
+        start_date = start.isoformat()
+    end_date = None
+    if has_end:
+        end_date = end.isoformat()
+
+    if not validation.are_period_dates_valid(start_date, end_date):
+        st.error(validation.COURSE_DATES_ERROR)
+        return
+
+    if start_date == current_start and end_date == current_end:
+        st.info(validation.NO_CHANGE_MESSAGE.format("dates"))
+        return
+
+    outside = database.count_sessions_outside_period(
+        connection, course_code, start_date, end_date
+    )
+    if outside > 0:
+        st.error(validation.SESSIONS_OUTSIDE_PERIOD_ERROR.format(outside, course_code))
+        return
+
+    database.update_course_dates(connection, course_code, start_date, end_date)
+    finish_edit(
+        f"{course_code} now runs {validation.describe_course_period(start_date, end_date)}."
+    )
+
+
 def show_change_enrollment_dates(connection):
     """Change the start and end dates of one enrollment (FR-24).
 
@@ -760,6 +879,8 @@ def show_edit_and_delete(connection):
     show_rename_student(connection)
     st.divider()
     show_rename_course(connection)
+    st.divider()
+    show_change_course_dates(connection)
     st.divider()
     show_change_enrollment_dates(connection)
     st.divider()
@@ -1026,14 +1147,26 @@ def show_filters(connection):
     if earliest is None:
         return None, NO_DATA_MESSAGE
 
-    course_options = [analytics.ALL_COURSES]
-    for course in database.get_courses(connection):
-        course_options.append(course["course_code"])
-    course_code = st.sidebar.selectbox("Course", course_options)
+    course_options = {analytics.ALL_COURSES: analytics.ALL_COURSES}
+    course_options.update(get_course_choices(connection))
+    course_label = st.sidebar.selectbox("Course", list(course_options))
+    course_code = course_options[course_label]
 
+    # One course: the range starts as that course's period (FR-25).
+    course_start = None
+    course_end = None
+    if course_code != analytics.ALL_COURSES:
+        course = database.get_course(connection, course_code)
+        course_start = course["start_date"]
+        course_end = course["end_date"]
+    default_start, default_end = analytics.get_default_date_range(
+        all_records, course_code, course_start, course_end
+    )
+
+    # No key: when the course changes, the default changes and the widget starts again.
     chosen_dates = st.sidebar.date_input(
         "Date range",
-        value=(date.fromisoformat(earliest), date.fromisoformat(latest)),
+        value=(date.fromisoformat(default_start), date.fromisoformat(default_end)),
     )
     # While the user is picking, the range has only a start date.
     if len(chosen_dates) != 2:
@@ -1298,6 +1431,8 @@ def show_manage_tab(connection):
     # Students and Sessions lists. The order of the sub-tabs on screen stays the same.
     with courses_tab:
         show_add_course(connection)
+        st.divider()
+        show_course_list(connection)
 
     with students_tab:
         # Search first, so the user can check whether a student exists before adding.

@@ -162,6 +162,35 @@ def get_date_bounds(frame):
     return frame["session_date"].min(), frame["session_date"].max()
 
 
+def get_default_date_range(frame, course_code, course_start, course_end):
+    """Return the default (start, end) of the date filter (FR-12, FR-25).
+
+    For All courses: the earliest and latest session dates.
+    For one course: the course's start and end dates; a side with no date uses that
+    course's session dates, and if it has none either, all sessions' dates.
+    """
+    earliest, latest = get_date_bounds(frame)
+    if course_code == ALL_COURSES:
+        return earliest, latest
+
+    course_frame = frame[frame["course_code"] == course_code]
+    course_earliest, course_latest = get_date_bounds(course_frame)
+
+    start = course_start
+    if start is None:
+        start = course_earliest
+    if start is None:
+        start = earliest
+
+    end = course_end
+    if end is None:
+        end = course_latest
+    if end is None:
+        end = latest
+
+    return start, end
+
+
 def filter_records(frame, course_code, start_date, end_date):
     """Return the rows for one course (or all courses) between two dates, both included.
 

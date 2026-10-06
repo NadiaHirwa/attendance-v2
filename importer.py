@@ -3,7 +3,8 @@
 The workflow has three steps that the app calls in order:
 1. read_csv() turns the uploaded bytes into rows (IR-01).
 2. validate_rows() sorts rows into accepted, duplicates and rejected.
-   It also checks each row against an existing enrollment's dates (BR-15).
+   It also checks each row against its course's dates (BR-16) and an existing
+   enrollment's dates (BR-15).
    It reads the database but never writes to it (IR-09).
 3. apply_import() saves the accepted rows in one transaction, only after Confirm.
 """
@@ -224,6 +225,23 @@ def check_session(connection, row, file_sessions):
     return None
 
 
+def check_course_period(connection, row):
+    """Return a reason if the row's session date is outside its course's dates (BR-16)."""
+    course = database.get_course(connection, row["course_code"])
+    start_date = course["start_date"]
+    end_date = course["end_date"]
+
+    if validation.is_date_in_period(row["session_date"], start_date, end_date):
+        return None
+
+    message = validation.ROW_OUTSIDE_COURSE_ERROR.format(
+        row["course_code"],
+        validation.describe_course_period(start_date, end_date),
+        row["session_date"],
+    )
+    return make_reason(row[ROW_COLUMN], message)
+
+
 def check_enrollment_dates(connection, row):
     """Return a reason if the row's date is outside an existing enrollment (BR-15), else None.
 
@@ -319,7 +337,9 @@ def validate_rows(connection, rows):
             rejected.append(reject(raw_row, make_reason(row[ROW_COLUMN], message)))
             continue
 
-        reason = check_student(connection, row, file_students)
+        reason = check_course_period(connection, row)
+        if reason is None:
+            reason = check_student(connection, row, file_students)
         if reason is None:
             reason = check_session(connection, row, file_sessions)
         if reason is None:
