@@ -383,10 +383,9 @@ class TestRemovedClassDay(FixesTestCase):
         """IR-12: a weekday whose class was removed names the removed class day."""
         result = self.review(["DS102,16/09/2026,001,Nadia Hirwa,P,"])
 
-        self.assertEqual(
-            result["rejected"][0]["reason"],
-            "Row 2: DS102 has no class on Wednesday 16/09/2026 (class day removed).",
-        )
+        self.assertTrue(result["rejected"][0]["reason"].startswith(
+            "Row 2: DS102 has no class on Wednesday 16/09/2026 (class day removed)."
+        ))
 
     def test_import_start_on_course_start_is_stored_as_null(self):
         """BR-17: a new student's first row on the course's first day stores start NULL."""
@@ -405,10 +404,111 @@ class TestRemovedClassDay(FixesTestCase):
         """IR-12: a weekend has no class anyway, so the message does not say removed."""
         result = self.review(["DS102,19/09/2026,001,Nadia Hirwa,P,"])
 
+        self.assertTrue(result["rejected"][0]["reason"].startswith(
+            "Row 2: DS102 has no class on Saturday 19/09/2026. Suggestion"
+        ))
+
+
+class TestTutorialSuggestion(FixesTestCase):
+    """S5 (Stage 7): a Class row with no class day can be imported as a tutorial.
+
+    Course DS102 in block B1 (07/09 to 25/09/2026) with Wednesday 16/09 removed.
+    """
+
+    def setUp(self):
+        """Add the block, the course and the student, then remove the holiday."""
+        super().setUp()
+        database.add_block(self.connection, "B1", "Block 1", "2026-09-07")
+        database.create_course(self.connection, "DS102", "Data Science Basics", "B1")
+        database.enroll_student(self.connection, "001", "DS102")
+        database.delete_session(self.connection, "DS102-2026-09-16")
+
+    def test_s5_weekend_class_row(self):
+        """S5: a Class row on Saturday 19/09 suggests "Import as tutorial on that date"."""
+        result = self.review(["DS102,19/09/2026,001,Nadia Hirwa,P,"])
+
+        self.assertEqual(self.suggestion_texts(result), ["Import as tutorial on that date"])
+        self.assertEqual(result["suggestions"][0]["kind"], "S5")
+        self.assertIn('Suggestion: "Import as tutorial on that date"',
+                      result["rejected"][0]["reason"])
+
+    def test_s5_accepted_plans_a_tutorial(self):
+        """S5: accepted, the row becomes a Tutorial on that date, created at Confirm."""
+        result = self.review(["DS102,19/09/2026,001,Nadia Hirwa,P,"], ["2-S5"])
+
+        row = result["accepted"][0]
+        self.assertEqual((row["type"], row["session_id"]), ("Tutorial", "DS102-2026-09-19-T1"))
+        importer.apply_import(self.connection, result["accepted"], "file.csv")
+        self.assertEqual(database.get_status(self.connection, "001", "DS102-2026-09-19-T1"),
+                         "Present")
+
+    def test_s5_removed_class_day(self):
+        """S5: the removed holiday 16/09 can take a tutorial too."""
+        result = self.review(["DS102,16/09/2026,001,Nadia Hirwa,P,"], ["2-S5"])
+
+        self.assertEqual(result["accepted"][0]["session_id"], "DS102-2026-09-16-T1")
         self.assertEqual(
-            result["rejected"][0]["reason"],
-            "Row 2: DS102 has no class on Saturday 19/09/2026.",
+            importer.make_cleaned_csv(result["accepted"], result["duplicates"]),
+            "course_code,date,student_id,full_name,status,type\n"
+            "DS102,16/09/2026,001,Nadia Hirwa,Present,Tutorial\n",
         )
+
+
+class TestEditRejectedRows(FixesTestCase):
+    """Stage 7: rejected rows are fixed in place and the file is checked again."""
+
+    def test_edited_row_is_accepted_after_recheck(self):
+        """Stage 7: row 2 has status 'maybe'; after typing P it is accepted, and the edit is
+        listed as 'edited by you: maybe -> P'."""
+        lines = ["PY101,07/09/2026,001,Nadia Hirwa,maybe,"]
+        first = self.review(lines)
+        self.assertEqual(len(first["rejected"]), 1)
+
+        edits = importer.collect_edits(
+            {}, first["rejected"], [dict(first["rejected"][0], status="P")]
+        )
+        self.assertEqual(edits, {2: {"status": "P"}})
+
+        rows, error = importer.read_csv(make_file(lines, HEADER_WITH_TYPE))
+        again = importer.review_rows(self.connection, rows, (), edits)
+        self.assertEqual(len(again["accepted"]), 1)
+        self.assertEqual(again["rejected"], [])
+        self.assertEqual(again["edits"], [{
+            "row": 2, "column": "status", "before": "maybe", "after": "P",
+            "why": "edited by you: maybe -> P",
+        }])
+        self.assertIn("PY101,07/09/2026,001,Nadia Hirwa,Present,Class",
+                      importer.make_cleaned_csv(again["accepted"], again["duplicates"]))
+
+    def test_nothing_is_written_before_confirm(self):
+        """Stage 7, IR-09: checking edits again does not change the database."""
+        rows, error = importer.read_csv(make_file(
+            ["PY101,07/09/2026,002,Eric Niyonzima,maybe,"], HEADER_WITH_TYPE
+        ))
+        importer.review_rows(self.connection, rows, (), {2: {"status": "A"}})
+
+        self.assertEqual(count_rows(self.connection, "attendance"), 0)
+        self.assertEqual(count_rows(self.connection, "students"), 1)
+
+    def test_collect_edits_keeps_earlier_edits(self):
+        """Stage 7: edits are kept by row number; an empty cell is ''; unchanged cells are
+        not edits."""
+        shown = [{"row": 3, "course_code": "PY101", "date": "x", "student_id": "001",
+                  "full_name": "Nadia Hirwa", "status": "maybe", "type": ""}]
+        edited = [dict(shown[0], date="07/09/2026", type=None)]
+
+        edits = importer.collect_edits({2: {"status": "P"}}, shown, edited)
+
+        self.assertEqual(edits, {2: {"status": "P"}, 3: {"date": "07/09/2026"}})
+
+    def test_edit_back_to_the_file_value_is_not_listed(self):
+        """Stage 7: an edit equal to the file's value is not a change."""
+        rows, error = importer.read_csv(make_file(
+            ["PY101,07/09/2026,001,Nadia Hirwa,maybe,"], HEADER_WITH_TYPE
+        ))
+        result = importer.review_rows(self.connection, rows, (), {2: {"status": "maybe"}})
+
+        self.assertEqual(result["edits"], [])
 
 
 class TestNextFreeId(unittest.TestCase):

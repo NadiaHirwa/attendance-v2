@@ -188,8 +188,8 @@ class TestValidateRows(ImporterTestCase):
         ])
 
         self.assertEqual(len(accepted), 0)
-        self.assertEqual(
-            rejected[0]["reason"], "Row 2: PY101 has no class on Saturday 12/09/2026."
+        self.assertTrue(
+            rejected[0]["reason"].startswith("Row 2: PY101 has no class on Saturday 12/09/2026.")
         )
 
     def test_class_row_without_a_class_day_is_rejected(self):

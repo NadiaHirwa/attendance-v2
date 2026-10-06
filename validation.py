@@ -133,11 +133,11 @@ NAME_CONFLICT_FILE_ERROR = (
     "Use one name per student ID."
 )
 STATUS_CONFLICT_SAVED_ERROR = (
-    "Student {} is already saved as {} for session {}, not {}. "
+    "Student {} is already saved as {} for {}, not {}. "
     "The saved record is kept; correct it in Manage Attendance."
 )
 STATUS_CONFLICT_FILE_ERROR = (
-    "Student {} is already {} for session {} earlier in this file (row {}), not {}. "
+    "Student {} is already {} for {} earlier in this file (row {}), not {}. "
     "The first row is kept."
 )
 SUGGESTION_REASON = ' Suggestion: "{}". Choose it under Suggestions and click Apply suggestions.'
@@ -146,6 +146,8 @@ USE_SAVED_NAME_SUGGESTION = "Use saved name {}"
 NEW_ID_SUGGESTION = "Assign next free ID {} as a new student"
 KEEP_SAVED_STATUS_CHOICE = "Keep saved {}"
 USE_FILE_STATUS_CHOICE = "Use file: {}"
+TUTORIAL_SUGGESTION = "Import as tutorial on that date"
+EDITED_BY_YOU = "edited by you: {} -> {}"
 # FR-31 auto-fixes: why each value was changed.
 FIX_SPACES = "Removed extra spaces."
 FIX_APOSTROPHE = "Replaced a curly apostrophe."

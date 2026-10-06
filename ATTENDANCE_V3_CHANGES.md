@@ -6,7 +6,7 @@
 | Author | Nadia Iradukunda Hirwa |
 | Builds on | `ATTENDANCE_V2_SPEC.md`, now renamed `ATTENDANCE_SPEC.md` (every rule there stays unless changed here) |
 | Source | Tutor comments, October 2026 |
-| Status | **Built.** Stages 0 to 6 complete; all merged into `ATTENDANCE_SPEC.md` and released (Stage 6: verification for Version 3) |
+| Status | **Built.** Stages 0 to 6 complete; all merged into `ATTENDANCE_SPEC.md` and released (Stage 6: verification for Version 3). **Version 3.1** (Stage 7, tutor review): week filter, KPI cards, drill-down charts, student titles, no session IDs on screen, fix rejected rows in place and S5; released. |
 
 This file lists only what **changes or is added**. Stage 0 merges it into the main specification.
 After Stage 0 it is kept as the **change log** for Version 3; `ATTENDANCE_SPEC.md` is the full specification.

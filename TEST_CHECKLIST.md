@@ -3,7 +3,7 @@
 **Before every section:** run `.venv\Scripts\python seed_demo.py`, restart Streamlit, refresh the browser.
 Every row starts from the seed data unless it says otherwise.
 
-✔ = confirmed by running the code (on a copy of the database or by an automated test). Run `.venv\Scripts\python -m unittest`: **274 tests, all OK**.
+✔ = confirmed by running the code (on a copy of the database or by an automated test). Run `.venv\Scripts\python -m unittest`: **288 tests, all OK**.
 
 Dates are shown as **DD/MM/YYYY** everywhere on screen and in downloads (BR-23).
 
@@ -13,8 +13,9 @@ Dates are shown as **DD/MM/YYYY** everywhere on screen and in downloads (BR-23).
 |---|---|---|---|---|---|---|---|
 | **Seed data** (505 expected) | 477 | 10 | 4 | 10 | 4 | **97.99%** | **99.21%** |
 | After importing `messy_import.csv`, no suggestions accepted (522 expected) | 479 | 11 | 6 | 11 | 15 | 97.80% | 97.13% |
-| After importing `messy_import.csv`, all 5 suggestions accepted (533 expected) | 483 | 11 | 6 | 11 | 22 | 97.82% | 95.87% |
+| After importing `messy_import.csv`, all 7 suggestions accepted (554 expected) | 485 | 11 | 6 | 11 | 41 | 97.83% | 92.60% |
 | After importing `clean_import.csv` (510 expected) | 482 | 11 | 5 | 10 | 2 | 98.01% | 99.61% |
+| Week 2 (14/09–18/09), all courses | | | | | | **98.73%** | **98.76%** |
 | **002 in PY101** (17 expected) | 10 | 2 | 0 | 5 | 0 | **70.59%** | 100.00% |
 
 **002 in PY101 loses 12 marks** (2 Late x 1 + 5 Absent x 2). ✔
@@ -68,13 +69,13 @@ Dates are shown as **DD/MM/YYYY** everywhere on screen and in downloads (BR-23).
 
 | # | Do | Expected |
 |---|---|---|
-| 3.1 | Search ID `002` | ✔ One match; the **profile opens below**: PY101 70.59%, **12** marks deducted; DS102 and MA103 100.00%, 0. |
+| 3.1 | Search ID `002` | ✔ "1 match, showing 002 in the profile below." The profile is titled **002 - Jean-Paul Mugisha**: PY101 70.59%, **12** marks deducted; DS102 and MA103 100.00%, 0. |
 | 3.2 | Search ID `004` | Courses **DS102, MA103, PY101**. |
 | 3.3 | Search ID `099` | "No student found". |
 | 3.4 | Search ID `1`, `12A`, `٠٠١` | ID error message (not "not found"). |
 | 3.5 | Search name `nadia   HIRWA` | Finds 001 (spaces cleaned, case ignored). |
 | 3.6 | Search name `Nadia` (partial) | **No result.** Exact full name only (partial search is Future Work). |
-| 3.7 | Add `013` / `Emile Uwase` | ✔ The form has only ID and name. "…added. Enroll them in a course in their profile above." Their profile opens: "Not enrolled in any course yet." |
+| 3.7 | Add `013` / `Emile Uwase` | ✔ Under "Add a student": "Only enrolled students appear in Record attendance, the Dashboard and the class register. Enroll the new student in a course from their profile." The form has only ID and name. "…added. Enroll them in a course in their profile above." Their profile opens: "Not enrolled in any course yet." |
 | 3.8 | Add `013` again | Error: ID already used. |
 | 3.9 | Add `014` / `NADIA HIRWA` | **Warning** (same name as 001). Tick the box, submit again → saved. |
 | 3.10 | Names `-Nadia`, `Nadia-`, `Jean--Paul`, `Jean - Paul`, `O''Neil`, `Nadia123`, `@`, spaces only | Each rejected. |
@@ -87,18 +88,20 @@ Dates are shown as **DD/MM/YYYY** everywhere on screen and in downloads (BR-23).
 | 3.17 | Profile → Late start or early leave: look at the form | ✔ Only that student's courses. Dates pre-filled, limited to the course period. "Current: … (full course period)" or "(joined late)". |
 | 3.18 | Profile of 002 → Rename to `-Jean` / unchanged / `nadia hirwa` | ✔ Name error / "No change" / same-name warning (tick and submit → saved). |
 | 3.19 | Profile of 004 → Un-enroll from DS102 | ✔ Removes **16** records + 1 enrollment. 004 keeps PY101 and MA103. |
+| 3.21 | Profile of 002: look at the sections | ✔ Every title names the student: "Enroll 002 - Jean-Paul Mugisha in a course", "Late start or early leave: 002 - …", "Rename 002 - Jean-Paul Mugisha", "Un-enroll 002 - … from a course", "Delete 002 - …". |
+| 3.22 | Add `014` / `NADIA HIRWA` (after 3.9), then search name `Nadia Hirwa` | ✔ "2 matches, showing 001; choose another in the Student box." |
 | 3.20 | Profile of 004 → Delete the student | ✔ Removes **50** records, 3 enrollments, 1 student. Then a new `004` can be added, with no old data. |
 
 ## 4. Manage → Class days & Tutorials
 
 | # | Do | Expected |
 |---|---|---|
-| 4.1 | B1-2627 → PY101 | ✔ "15 class days and 2 tutorials", with dates as DD/MM/YYYY and the weekday. |
+| 4.1 | B1-2627 → PY101 | ✔ "15 class days and 2 tutorials". Columns **Date, Day, Type, Records saved, Not recorded**, no session IDs. Tutorials show as "Tutorial T1". Wed 16/09: 11 saved, 1 not recorded. |
 | 4.2 | B1-2627 → DS102 | 14 class days: **no 16/09** (the holiday). |
 | 4.3 | Add a tutorial to PY101 on **Saturday** 12/09/2026, twice | ✔ "Sat 12/09/2026 - Tutorial T1", then **T2**. Weekends are allowed for tutorials. |
 | 4.4 | Add a tutorial on 30/09/2026 (after the course) | ✔ Refused: "PY101 runs from 07/09/2026 to 25/09/2026. Choose a date in that period." |
 | 4.5 | Remove PY101 "Wed 16/09/2026 - Class": look at the preview | ✔ "…and delete **11** attendance record(s) saved for it." (12 students, 003 has no record.) |
-| 4.6 | Remove DS102 "Wed 23/09/2026 - Class" (tick, delete) | ✔ 9 records removed. Dashboard **468 / 10 / 4 / 10 / 4, 97.95%, 99.19%**, 49 sessions. |
+| 4.6 | Remove DS102 "Wed 23/09/2026 - Class" (tick, delete) | ✔ 9 records removed. Dashboard **468 / 10 / 4 / 10 / 4, 97.95%, 99.19%**, "12 students · 43 class days · 6 tutorials". |
 
 ## 5. Manage → Record attendance
 
@@ -151,19 +154,19 @@ Columns: `course_code, date, student_id, full_name, status`, optional `type` (Cl
 
 | # | Upload | Expected |
 |---|---|---|
-| 8.1 | `messy_import.csv` → Validate | ✔ Metrics: **Auto-fixes 39, Accepted suggestions 0 of 5, Accepted 6, Skipped duplicates 2, Rejected 11.** Every suggestion unticked; S4 shows "Keep saved Absent". Nothing saved yet; Dashboard unchanged. |
-| 8.2 | Confirm without accepting anything | ✔ "Auto-fixes: 39. Accepted suggestions: 0. Saved: 6. Skipped duplicates: 2. Rejected: 11." Dashboard **479 / 11 / 6 / 11 / 15, 97.80%, 97.13%**. 002 on 08/09 stays **Absent**. The new MA103 Saturday tutorial (19/09) is created. |
-| 8.3 | Fresh seed: Validate, tick all four boxes, choose "Use file: Present" → **Apply suggestions** | ✔ **Accepted suggestions 5 of 5, Accepted 11, Skipped duplicates 2, Rejected 6.** Still nothing saved. |
-| 8.4 | Confirm | ✔ "Auto-fixes: 39. Accepted suggestions: 5. Saved: 11. Skipped duplicates: 2. Rejected: 6." Dashboard **483 / 11 / 6 / 11 / 22, 97.82%, 95.87%**. 002 on 08/09 is **Present**, source `messy_import.csv`. New students **013 Fabrice Gasana** (PY101 from 21/09) and **015 Alice Kayitesi** (MA103 from 22/09). |
+| 8.1 | `messy_import.csv` → Validate | ✔ Metrics: **Auto-fixes 39, Accepted suggestions 0 of 7, Accepted 6, Skipped duplicates 2, Rejected 11.** Every suggestion unticked; S4 shows "Keep saved Absent". Nothing saved yet; Dashboard unchanged. |
+| 8.2 | Confirm without accepting anything | ✔ "Edited by you: 0. Auto-fixes: 39. Accepted suggestions: 0. Saved: 6. Skipped duplicates: 2. Rejected: 11." Dashboard **479 / 11 / 6 / 11 / 15, 97.80%, 97.13%**. 002 on 08/09 stays **Absent**. The new MA103 Saturday tutorial (19/09) is created. |
+| 8.3 | Fresh seed: Validate, tick all six boxes, choose "Use file: Present" → **Apply suggestions** | ✔ **Accepted suggestions 7 of 7, Accepted 13, Skipped duplicates 2, Rejected 4.** Still nothing saved. |
+| 8.4 | Confirm | ✔ "Edited by you: 0. Auto-fixes: 39. Accepted suggestions: 7. Saved: 13. Skipped duplicates: 2. Rejected: 4." Dashboard **485 / 11 / 6 / 11 / 41, 97.83%, 92.60%**. 002 on 08/09 is **Present**, source `messy_import.csv`. New students **013 Fabrice Gasana** (PY101 from 21/09) and **015 Alice Kayitesi** (MA103 from 22/09). New tutorials PY101 Sat 12/09 and DS102 Wed 16/09 (S5). |
 | 8.5 | Row 12 (S1): `004, eric niyonzimma` | ✔ "Use saved name Eric Niyonzima". Accepted → saved under 004 Eric Niyonzima. |
 | 8.6 | Rows 13 and 14 (S2): `011, Fabrice Gasana` (saved 011 is Claudine Umutoni) | ✔ Both rows: "Assign next free ID 013 as a new student" (the same pair always gets the same ID). |
 | 8.7 | Row 16 (S3): `014` again as Alice Kayitesi (row 15 is Alice Uwimana) | ✔ "Assign next free ID 015 as a new student": 013 is already proposed, 014 is in the file. |
 | 8.8 | Row 17 (S4): 002 PY101 08/09 `P` (saved Absent) | ✔ Default "Keep saved Absent" → rejected, saved record kept. "Use file: Present" → updated in the same transaction as the import. |
-| 8.9 | Download cleaned file (after 8.3) | ✔ 13 rows (11 accepted + 2 duplicates) in file order, Version 3 columns, auto-fixes and suggestions applied, dates as DD/MM/YYYY. Rejected rows stay in their own download. Importing the cleaned file after 8.4 gives 0 auto-fixes and **13 skipped duplicates**. |
-| 8.10 | The **original** messy file again after 8.4 | ⚠ 0 accepted, 9 duplicates, 10 rejected, with new suggestions (S2 now proposes 016/017, because 013 and 015 are saved). Import the cleaned file instead. |
+| 8.9 | Download cleaned file (after 8.3) | ✔ 15 rows (13 accepted + 2 duplicates) in file order, Version 3 columns, auto-fixes, edits and suggestions applied, dates as DD/MM/YYYY; rows 9 and 10 have type Tutorial. Rejected rows stay in their own download. |
+| 8.10 | The **original** messy file again after 8.4 | ⚠ The S2/S3 rows get new IDs proposed (013 and 015 are now saved). Import the cleaned file instead. |
 | 8.11 | `clean_import.csv` → Confirm (fresh seed) | ✔ 7 accepted. Dashboard **482 / 11 / 5 / 10 / 2, 98.01%, 99.61%**. |
-| 8.12 | Class row on a Saturday | ✔ Rejected: "Row 9: PY101 has no class on Saturday 12/09/2026." |
-| 8.13 | Class row on the DS102 holiday | ✔ Rejected: "Row 10: DS102 has no class on Wednesday 16/09/2026 (class day removed)." A weekend keeps the plain message (8.12). |
+| 8.12 | Class row on a Saturday (row 9) | ✔ Rejected: "Row 9: PY101 has no class on Saturday 12/09/2026. Suggestion: "Import as tutorial on that date"…" (S5). Accepted → a new tutorial PY101 12/09 T1, created at Confirm. |
+| 8.13 | Class row on the DS102 holiday (row 10) | ✔ Rejected: "Row 10: DS102 has no class on Wednesday 16/09/2026 (class day removed)." with the same S5 suggestion. A weekday with no class in an older course without dates gets no suggestion. |
 | 8.14 | Tutorial rows on a new date | ✔ One new tutorial (T1) is planned and shared by every row of that date (rows 12 and 20); created only at Confirm. |
 | 8.15 | Row filling an existing Unknown | ✔ Gap filled (rows 2 to 5). |
 | 8.16 | Same status as saved | ✔ Skipped as duplicate (row 18); a row repeating an earlier row (row 19) too. |
@@ -173,6 +176,10 @@ Columns: `course_code, date, student_id, full_name, status`, optional `type` (Cl
 | 8.20 | Row outside the course period | ✔ Rejected: "Row 11: PY101 runs from 07/09/2026 to 25/09/2026, not on 02/10/2026." |
 | 8.21 | Unknown course `BIO200` / status `maybe` / ID `0` | ✔ Rejected (rows 8, 7, 6). Import never creates courses. |
 | 8.22 | One student and session with two statuses in the file | ✔ First row kept, later row rejected (no suggestion). |
+| 8.25 | Rejected table: change row 7's status `maybe` to `P` → **Re-check** | ✔ Auto-fixed lists "row 7, status, maybe → P, edited by you: maybe -> P" (plus the P → Present auto-fix: 40). Row 7 moves to **Skipped duplicates** (001 is already Present on 07/09): 6 / 3 / 10. Still nothing saved; the cleaned file has the edited row. Confirm: "Edited by you: 1. Auto-fixes: 40. …" |
+| 8.26 | Re-check, then Apply suggestions (or the reverse) | ✔ Both are kept: edits stay by row number, accepted suggestions stay ticked. **Validate** starts again with neither. |
+| 8.27 | Rejected table: the `row` and `reason` columns | Read-only. |
+| 8.28 | Every import table and reason | ✔ No session IDs: a status conflict names "PY101 on Tuesday 08/09/2026 (Class)". |
 | 8.23 | Saving fails halfway | Nothing saved (one transaction); an error asks you to validate again. |
 | 8.24 | Download rejected rows / template | CSV with a `reason` column / header-only template with the Version 3 columns. |
 
@@ -180,33 +187,36 @@ Columns: `course_code, date, student_id, full_name, status`, optional `type` (Cl
 
 | # | Do | Expected |
 |---|---|---|
-| 9.1 | All blocks, all courses, full range | ✔ Students 12, Sessions 50, **477 / 10 / 4 / 10 / 4, 97.99%, 99.21%**. Range 07/09/2026 to 25/09/2026. Caption "Showing: All blocks, All courses, from 07/09/2026 to 25/09/2026." |
-| 9.1b | Block → B1-2627 | ✔ The Course box lists only DS102, MA103 and PY101; the range is the block's period. With a second block, its courses don't appear here. |
-| 9.2 | B1-2627 → PY101 | ✔ **177 / 5 / 1 / 7 / 2, 96.30%, 98.96%**, 17 sessions. Caption "Showing: B1-2627, PY101, from 07/09/2026 to 25/09/2026." |
-| 9.2b | Back to All blocks | The Course box returns to "All courses" and the range to all session dates. |
-| 9.3 | Date range with no sessions | Info message, no empty charts. |
-| 9.4 | Only a start date picked | "Choose an end date" message. |
-| 9.5 | Rate chart | One bar per session, date order, coloured by course, 0 to 100 axis. Labels like "07/09 PY101", "10/09 PY101-T1". |
-| 9.6 | Status chart | Stacked Present (blue), Late (light blue), Excused (pink), Absent (orange), Unknown (grey). |
+| 9.1 | All blocks, all courses | ✔ Five bordered cards: **Attendance rate 97.99%, Completeness 99.21%, Deducted marks 30, Students below threshold 0, Absence alerts 1**. Under them ● Present 477, ● Late 10, ● Excused 4, ● Absent 10, ● Not recorded 4 (dots in the chart colours) and "12 students · 44 class days · 6 tutorials". Caption "Showing: All blocks, All courses, from 07/09/2026 to 25/09/2026." |
+| 9.1b | Sidebar with All blocks | ✔ Block, Course and only a **Custom dates** box (no Week box). |
+| 9.1c | Charts with All blocks | ✔ "Attendance rate by block" (one bar, B1-2627, labelled 97.99%) and "Recording status by block". |
+| 9.2 | Block → B1-2627 | ✔ The Course box lists only DS102, MA103 and PY101. A **Week** box: All weeks, Week 1 (07/09–11/09), Week 2 (14/09–18/09), Week 3 (21/09–25/09). Charts "by course": DS102 **98.63%**, MA103 **99.38%**, PY101 **96.30%**. |
+| 9.2b | B1-2627 → Week 2 | ✔ Caption "Showing: B1-2627, All courses, Week 2 (14/09–18/09)." Cards 98.73%, 98.76%, Deducted marks 8, alerts 0. The PY101 Saturday tutorial 19/09 is in week 2. |
+| 9.3 | B1-2627 → PY101, All weeks | ✔ 177 / 5 / 1 / 7 / 2 under the cards, 96.30%, 98.96%, "12 students · 15 class days · 2 tutorials". Charts "by week": **98.48%, 98.53%, 90.91%**. |
+| 9.3b | Turn on **Show by day** | ✔ "Attendance rate by day": 16 bars (Mon 07/09 … Fri 25/09 and Sat 19/09; the 10/09 tutorial shares Thursday's bar). Mon 21/09 is 90.91%. |
+| 9.4 | Tick **Custom dates** | ✔ A date range appears, starting at the chosen week or period. A range with no sessions gives an info message, no empty charts; only a start date gives "Choose an end date". |
+| 9.5 | Rate chart | ✔ Each bar labelled with its %, axis 0 to 100. |
+| 9.6 | Status chart | Stacked Present (blue), Late (light blue), Excused (pink), Absent (orange), Unknown (grey), at the same level as the rate chart. |
 | 9.7 | Status filter: keep only Unknown / untick everything | Only grey parts, colours unchanged / info message. |
-| 9.8 | Threshold 75% | ✔ "No students are below 75%." (Rates cover all three courses.) |
-| 9.9 | Threshold 97% | ✔ **002 (90.00%), 009 (96.00%), 011 (96.88%), 010 (96.97%)**, lowest first. |
-| 9.10 | **Absence alerts**, minimum 2 (or 1) | ✔ Only **009, PY101: current streak 2, longest 2, last absence 25/09/2026**. |
-| 9.11 | Absence alerts, minimum 3 | ✔ "No students have 3 or more absences in a row." |
+| 9.8 | Threshold 75% | ✔ "No students are below 75%." Card: 0. |
+| 9.9 | Threshold 97% | ✔ **002 (90.00%), 009 (96.00%), 011 (96.88%), 010 (96.97%)**, lowest first. Card: **4**. |
+| 9.10 | **Absence alerts**, minimum 2 (or 1) | ✔ Only **009, PY101: current streak 2, longest 2, last absence 25/09/2026**. Card: 1. |
+| 9.11 | Absence alerts, minimum 3 | ✔ "No students have 3 or more absences in a row." Card: 0. |
 | 9.12 | Why isn't 002 an alert? | ✔ 002's longest streak in PY101 is 3 (21-23/09), but the **current** streak is 0 (Present on 24/09 and 25/09). |
 | 9.13 | Excused or Unknown between two absences | ✔ Ends the streak: Absent, Excused, Absent = longest 1. |
+| 9.14 | Settings: Late 2, Absent 3 | ✔ The Deducted marks card shows **50** (10 x 2 + 10 x 3). |
 
 ## 10. Reports
 
 | # | Do | Expected |
 |---|---|---|
-| 10.1 | "All students" | Overall metrics, per-student table with **Deducted marks** and **Note**, attendance records, the deductions export; every table has a download (dates as DD/MM/YYYY). |
+| 10.1 | "All students" | Overall metrics, per-student table with **Deducted marks** and **Note**, attendance records (columns Student ID, Full name, Course, **Date, Day, Type**, Status; no session IDs), the deductions export; every table has a download (dates as DD/MM/YYYY). |
 | 10.2 | Download the CSVs, open them | Same rows and numbers as on screen, including Deducted marks. |
 | 10.3 | Student 002 | ✔ **43 / 2 / 0 / 5 / 0, 90.00%** overall, **Deducted marks 12**; By course: PY101 70.59%, deducted 12, longest streak 3. |
 | 10.4 | Student 008 | ✔ 48 / 0 / 1 / 0 / 1, 100.00%, 98.00%. Deducted 0, Note **"1 not recorded"** (DS102 tutorial 24/09 is Unknown). |
 | 10.4b | Deductions export → PY101 | ✔ 12 rows sorted by ID; columns Student ID, Full name, Late, Absent, Excused, Not recorded, Deducted marks; 002 = **12**. Downloads as `deductions_PY101.csv`. |
 | 10.4c | Deductions export → DS102 | ✔ 008: Not recorded **1**, Deducted **0** (missing records never deduct). |
-| 10.5 | Student 010 (late joiner) | ✔ 33 expected: 32 Present, 1 Absent, **96.97%**. "Enrolled from 14/09/2026"; the history starts on 14/09. |
+| 10.5 | Student 010 (late joiner) | ✔ 33 expected: 32 Present, 1 Absent, **96.97%**. "Enrolled from 14/09/2026"; the history (Course, Date, Day, Type, Status) starts on 14/09. |
 | 10.6 | Student 012 (early leaver) | ✔ 21 expected: 20 Present, 1 Late, 100.00%. "Enrolled until 18/09/2026". |
 | 10.4d | **Class register** → B1-2627 → PY101 | ✔ One row per student (sorted by ID); columns "Mon 07/09" … with "Tut 10/09" and "Tut 19/09" in date order; cells P / L / E / A / ?; then Present, Late, Excused, Absent, Unknown, Rate, Deducted. 002: **70.59%, 12**. |
 | 10.4e | Register: 010 and 012 | ✔ 010 (late joiner) is "—" in week 1; 012 (early leaver) is "—" after 18/09, including the Saturday tutorial. |

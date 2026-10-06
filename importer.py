@@ -411,35 +411,48 @@ def is_removed_class_day(connection, course_code, session_date):
     return course["start_date"] is not None and course["end_date"] is not None
 
 
-def find_session(connection, row, file_tutorials):
-    """Set row['session_id'] to the class day or tutorial of the row. Return a reason or None.
+def find_session(connection, row, file_tutorials, accepted_keys=()):
+    """Set row['session_id'] to the class day or tutorial of the row. Return (reason, suggestion).
 
     Class (IR-12): the course must have a class on that date; a weekend or a removed
-    day has none. Tutorial (IR-13): the first tutorial on that date is used; if there
-    is none, a new tutorial ID is planned, and later rows for the same date share it.
+    day has none, and gets suggestion S5 "Import as tutorial on that date" (Stage 7).
+    Tutorial (IR-13): the first tutorial on that date is used; if there is none, a new
+    tutorial ID is planned, and later rows for the same date share it.
     """
     course_code = row["course_code"]
     session_date = row["date"]
+    suggestion = None
 
     if row[TYPE_COLUMN] == validation.CLASS:
         class_session = database.get_class_session(connection, course_code, session_date)
-        if class_session is None:
-            message = validation.NO_CLASS_ERROR
-            if is_removed_class_day(connection, course_code, session_date):
-                message = validation.CLASS_DAY_REMOVED_ERROR
-            message = message.format(
-                course_code,
-                validation.weekday_name(session_date),
-                validation.format_date(session_date),
-            )
-            return make_reason(row[ROW_COLUMN], message)
-        row["session_id"] = class_session["session_id"]
-        return None
+        if class_session is not None:
+            row["session_id"] = class_session["session_id"]
+            return None, None
+
+        removed = is_removed_class_day(connection, course_code, session_date)
+        weekend = validation.weekday_name(session_date) in WEEKEND_DAYS
+        message = validation.NO_CLASS_ERROR
+        if removed:
+            message = validation.CLASS_DAY_REMOVED_ERROR
+        message = message.format(
+            course_code,
+            validation.weekday_name(session_date),
+            validation.format_date(session_date),
+        )
+        if not removed and not weekend:
+            return make_reason(row[ROW_COLUMN], message), None
+
+        suggestion = make_suggestion(row, "S5", validation.TUTORIAL_SUGGESTION)
+        if suggestion["key"] not in accepted_keys:
+            message += validation.SUGGESTION_REASON.format(suggestion["text"])
+            return make_reason(row[ROW_COLUMN], message), suggestion
+        suggestion["accepted"] = True
+        row[TYPE_COLUMN] = validation.TUTORIAL
 
     tutorials = database.get_tutorials_on_date(connection, course_code, session_date)
     if tutorials:
         row["session_id"] = tutorials[0]["session_id"]
-        return None
+        return None, suggestion
 
     key = (course_code, session_date)
     if key not in file_tutorials:
@@ -448,7 +461,18 @@ def find_session(connection, row, file_tutorials):
             connection, course_code, session_date, planned_ids
         )
     row["session_id"] = file_tutorials[key]
-    return None
+    return None, suggestion
+
+
+def describe_row_session(row):
+    """Return the row's session without its ID, like 'PY101 on Tuesday 08/09/2026 (Class)'."""
+    session_type = validation.CLASS
+    if row[TYPE_COLUMN] == validation.TUTORIAL:
+        session_type = f"Tutorial {row['session_id'].split('-')[-1]}"
+    return (
+        f"{row['course_code']} on {validation.weekday_name(row['date'])} "
+        f"{validation.format_date(row['date'])} ({session_type})"
+    )
 
 
 def check_enrollment_dates(connection, row):
@@ -507,7 +531,7 @@ def check_status(connection, row, file_statuses, accepted_keys):
             suggestion["accepted"] = True
             return "update", None, suggestion
         message = validation.STATUS_CONFLICT_SAVED_ERROR.format(
-            student_id, saved_status, session_id, status
+            student_id, saved_status, describe_row_session(row), status
         )
         message += validation.SUGGESTION_REASON.format(text)
         return "conflict", make_reason(row[ROW_COLUMN], message), suggestion
@@ -519,7 +543,7 @@ def check_status(connection, row, file_statuses, accepted_keys):
             message = validation.DUPLICATE_FILE_REASON.format(first_row)
             return "duplicate", make_reason(row[ROW_COLUMN], message), None
         message = validation.STATUS_CONFLICT_FILE_ERROR.format(
-            student_id, first_status, session_id, first_row, status
+            student_id, first_status, describe_row_session(row), first_row, status
         )
         return "conflict", make_reason(row[ROW_COLUMN], message), None
 
@@ -545,15 +569,71 @@ def find_taken_ids(connection, fixed_rows):
     return taken_ids
 
 
-def review_rows(connection, rows, accepted_keys=()):
+def apply_edits(rows, edits):
+    """Return (rows with the user's edits, the list of edits) (Stage 7).
+
+    edits maps a row number to {column: new value}, typed in the Rejected table. Each
+    edit is listed like an auto-fix, with why 'edited by you: before -> after'. An edit
+    equal to the file's value is not a change and is not listed.
+    """
+    edited_rows = []
+    edit_list = []
+    for row in rows:
+        row_edits = edits.get(row[ROW_COLUMN], {})
+        edited = dict(row)
+        for column in FILE_COLUMNS:
+            if column not in row_edits or row_edits[column] == row[column]:
+                continue
+            edited[column] = row_edits[column]
+            edit_list.append({
+                ROW_COLUMN: row[ROW_COLUMN],
+                "column": column,
+                "before": row[column],
+                "after": row_edits[column],
+                "why": validation.EDITED_BY_YOU.format(row[column], row_edits[column]),
+            })
+        edited_rows.append(edited)
+    return edited_rows, edit_list
+
+
+def clean_cell(value):
+    """Return a table cell as text; an empty cell (None or NaN) becomes ''."""
+    if value is None or (isinstance(value, float) and value != value):
+        return ""
+    return str(value)
+
+
+def collect_edits(edits, shown_rows, edited_rows):
+    """Return the edits merged with the cells changed in the Rejected table (Stage 7).
+
+    edits maps a row number to {column: value}. shown_rows are the rejected rows as
+    they were shown, edited_rows the same rows after the user typed; both are lists
+    of dicts with 'row' and the file columns. Earlier edits are kept.
+    """
+    merged = {}
+    for row_number, row_edits in edits.items():
+        merged[row_number] = dict(row_edits)
+
+    for shown, edited in zip(shown_rows, edited_rows):
+        row_number = int(shown[ROW_COLUMN])
+        for column in FILE_COLUMNS:
+            new_value = clean_cell(edited[column])
+            if new_value != clean_cell(shown[column]):
+                merged.setdefault(row_number, {})[column] = new_value
+    return merged
+
+
+def review_rows(connection, rows, accepted_keys=(), edits=None):
     """Auto-fix, validate and suggest fixes for the rows, without writing (FR-31, IR-09).
 
-    accepted_keys holds the keys of the suggestions the user accepted. Returns a dict:
-    'fixes' (every auto-fix), 'suggestions' (with 'accepted' set), and the
-    'accepted', 'duplicates' and 'rejected' rows. Accepted rows that change a saved
-    status have 'update' set to True.
+    accepted_keys holds the keys of the suggestions the user accepted; edits holds the
+    values typed in the Rejected table (see apply_edits, Stage 7). Returns a dict:
+    'edits', 'fixes' (every auto-fix), 'suggestions' (with 'accepted' set), and the
+    'accepted', 'duplicates' and 'rejected' rows. Rejected rows show the values after
+    the edits. Accepted rows that change a saved status have 'update' set to True.
     """
     accepted_keys = set(accepted_keys)
+    rows, edit_list = apply_edits(rows, edits or {})
     fixes = []
     fixed_rows = []
     for raw_row in rows:
@@ -562,6 +642,7 @@ def review_rows(connection, rows, accepted_keys=()):
         fixes.extend(row_fixes)
 
     result = {
+        "edits": edit_list,
         "fixes": fixes,
         "suggestions": [],
         "accepted": [],
@@ -588,7 +669,9 @@ def review_rows(connection, rows, accepted_keys=()):
 
         reason = check_course_period(connection, row)
         if reason is None:
-            reason = find_session(connection, row, file_tutorials)
+            reason, suggestion = find_session(connection, row, file_tutorials, accepted_keys)
+            if suggestion is not None:
+                result["suggestions"].append(suggestion)
         if reason is None:
             reason, suggestion = check_student(
                 connection, row, file_students, new_ids, accepted_keys

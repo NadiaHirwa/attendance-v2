@@ -19,9 +19,17 @@ UNKNOWN = "Unknown"
 COUNT_COLUMNS = [PRESENT, LATE, EXCUSED, ABSENT, UNKNOWN]
 NOT_AVAILABLE = "N/A"
 ALL_COURSES = "All courses"
+ALL_BLOCKS = "All blocks"
+# Courses from a database made before Version 3 have no block.
+NO_BLOCK_LABEL = "No block"
+# Dashboard chart levels (Stage 7): one bar per block, course, week or day.
+LEVEL_BLOCK = "block"
+LEVEL_COURSE = "course"
+LEVEL_WEEK = "week"
+LEVEL_DAY = "day"
 DEFAULT_THRESHOLD = 75
 CHART_VALUE_COLUMN = "Attendance rate (%)"
-CHART_LABEL_COLUMN = "Session"
+CHART_LABEL_COLUMN = "Group"
 CHART_COURSE_COLUMN = "Course"
 CHART_STATUS_COLUMN = "Status"
 CHART_COUNT_COLUMN = "Students"
@@ -50,6 +58,8 @@ RECORD_COLUMNS = [
     "status",
 ]
 ENROLLMENT_COLUMNS = ["enrollment_start", "enrollment_end"]
+# The session's type and the course's block (Stage 7); missing in older test data.
+SESSION_COLUMNS = ["session_type", "block_id"]
 ENROLLED_FROM_COLUMN = "Enrolled from"
 ENROLLED_UNTIL_COLUMN = "Enrolled until"
 # Shown instead of an empty date (BR-15).
@@ -115,10 +125,12 @@ def build_records_frame(records):
     """Turn expected records from the database into a DataFrame.
 
     A missing status becomes 'Unknown'. It is computed here, never stored (BR-12).
-    The enrollment dates are kept for the student report (FR-24).
+    The enrollment dates are kept for the student report (FR-24). A missing session
+    type means Class.
     """
-    frame = pd.DataFrame(records, columns=RECORD_COLUMNS + ENROLLMENT_COLUMNS)
+    frame = pd.DataFrame(records, columns=RECORD_COLUMNS + ENROLLMENT_COLUMNS + SESSION_COLUMNS)
     frame["status"] = frame["status"].fillna(UNKNOWN)
+    frame["session_type"] = frame["session_type"].fillna(validation.CLASS)
     return frame
 
 
@@ -250,86 +262,164 @@ def calculate_dashboard_metrics(frame):
     return metrics
 
 
-def make_session_label(session_date, session_id, include_year):
-    """Return a short chart label like '07/09 PY101' or '10/09 PY101-T1' (BR-23).
+def calculate_kpis(frame, late_deduction, absent_deduction, threshold, streak_minimum):
+    """Return the numbers of the Dashboard cards (Stage 7, FR-13).
 
-    A generated session ID already contains the date ('PY101-2026-09-07'), so the
-    date is taken out of it to keep the label short. With include_year, the date is
-    shown in full: '07/09/2026 PY101'.
+    Rates and status counts as in calculate_rates(); 'deducted' is the total deducted
+    marks with the current settings (BR-22); 'below_threshold' counts students whose
+    rate is strictly below the threshold (FR-15); 'alerts' counts the student-course
+    rows whose current absence streak reaches streak_minimum (FR-21); 'students',
+    'class_days' and 'tutorials' count what the filters show.
     """
-    short_id = session_id.replace("-" + session_date, "")
-    display_date = validation.format_date(session_date)
-    if not include_year:
-        # 'DD/MM/YYYY'[:5] keeps only 'DD/MM'.
-        display_date = display_date[:5]
-    return f"{display_date} {short_id}"
+    kpis = summarize_frame(frame)
+    kpis["deducted"] = calculate_deduction(
+        kpis["late"], kpis["absent"], late_deduction, absent_deduction
+    )
+
+    below, no_rate = split_by_threshold(build_student_summary(frame), threshold)
+    kpis["below_threshold"] = len(below)
+    kpis["alerts"] = len(find_streak_alerts(build_streak_table(frame), streak_minimum))
+
+    kpis["students"] = frame["student_id"].nunique()
+    sessions = frame.drop_duplicates("session_id")
+    tutorials = int((sessions["session_type"] == validation.TUTORIAL).sum())
+    kpis["tutorials"] = tutorials
+    kpis["class_days"] = len(sessions) - tutorials
+    return kpis
 
 
-def labels_need_year(session_summary):
-    """Return True if the sessions are in more than one year, so labels must show the year."""
-    # The first 4 characters of 'YYYY-MM-DD' are the year.
-    first_year = session_summary["session_date"].min()[:4]
-    last_year = session_summary["session_date"].max()[:4]
-    return first_year != last_year
+# ---------- Weeks (Stage 7) ----------
+
+def make_week_label(number, monday):
+    """Return 'Week 2 (14/09–18/09)': the week's Monday to Friday."""
+    friday = monday + timedelta(days=4)
+    return f"Week {number} ({monday.strftime('%d/%m')}–{friday.strftime('%d/%m')})"
 
 
-def build_rate_chart_data(frame):
-    """Return one row per session (label, course, rate) in date order for the chart (FR-14).
+def build_week_options(start_date, end_date):
+    """Return the weeks of a period as dicts with 'label', 'start' and 'end' (Stage 7).
 
-    Sessions on the same date are ordered by session ID.
-    Sessions with no recorded status have no rate, so they are left out.
-    Labels show the year only when the sessions are in more than one year.
+    Week 1 starts on the Monday on or before start_date. Each week runs Monday to
+    Sunday, so a tutorial on a weekend belongs to the week before it; the label
+    shows Monday to Friday.
     """
-    columns = [CHART_LABEL_COLUMN, CHART_COURSE_COLUMN, CHART_VALUE_COLUMN]
-    session_summary = build_session_summary(frame)
-    if session_summary.empty:
-        return pd.DataFrame(columns=columns)
-
-    include_year = labels_need_year(session_summary)
-    rows = []
-    for index, row in session_summary.iterrows():
-        if pd.isna(row["attendance_rate"]):
-            continue
-        label = make_session_label(row["session_date"], row["session_id"], include_year)
-        rows.append({
-            CHART_LABEL_COLUMN: label,
-            CHART_COURSE_COLUMN: row["course_code"],
-            CHART_VALUE_COLUMN: row["attendance_rate"],
+    first_monday = datetime.strptime(find_first_monday(start_date), validation.DATE_FORMAT)
+    weeks = []
+    for index in range(find_week_number(first_monday.strftime(validation.DATE_FORMAT),
+                                        end_date)):
+        monday = first_monday + timedelta(days=7 * index)
+        sunday = monday + timedelta(days=6)
+        weeks.append({
+            "label": make_week_label(index + 1, monday),
+            "start": monday.strftime(validation.DATE_FORMAT),
+            "end": sunday.strftime(validation.DATE_FORMAT),
         })
+    return weeks
 
-    return pd.DataFrame(rows, columns=columns)
 
+# ---------- Drill-down charts (Stage 7, FR-14, FR-20) ----------
 
-def build_status_chart_data(frame):
-    """Return one row per session (label, course and the five counts) in date order (FR-20).
+def choose_chart_level(block_choice, course_code, by_day=False):
+    """Return the chart level for the filters: 'block', 'course', 'week' or 'day'.
 
-    Uses the same labels and order as build_rate_chart_data(). Sessions where
-    nothing was recorded are kept: their whole bar is Unknown.
+    All blocks: one bar per block. One block (or "No block"): one bar per course.
+    One course: one bar per week, or per day with "Show by day".
     """
-    columns = [CHART_LABEL_COLUMN, CHART_COURSE_COLUMN] + STATUS_ORDER
-    session_summary = build_session_summary(frame)
-    if session_summary.empty:
+    if course_code != ALL_COURSES:
+        if by_day:
+            return LEVEL_DAY
+        return LEVEL_WEEK
+    if block_choice == ALL_BLOCKS:
+        return LEVEL_BLOCK
+    return LEVEL_COURSE
+
+
+def make_chart_title(kind, level):
+    """Return a chart title like 'Attendance rate by course'."""
+    return f"{kind} by {level}"
+
+
+def find_group(row, level, first_monday):
+    """Return (sort key, label) of the bar a record belongs to at a chart level."""
+    if level == LEVEL_BLOCK:
+        block_id = row["block_id"]
+        if block_id is None or pd.isna(block_id):
+            block_id = NO_BLOCK_LABEL
+        return block_id, block_id
+
+    if level == LEVEL_COURSE:
+        return row["course_code"], row["course_code"]
+
+    session_date = row["session_date"]
+    if level == LEVEL_WEEK:
+        number = find_week_number(first_monday, session_date)
+        monday = datetime.strptime(first_monday, validation.DATE_FORMAT)
+        monday = monday + timedelta(days=7 * (number - 1))
+        return number, make_week_label(number, monday)
+
+    weekday = validation.weekday_name(session_date)[:3]
+    return session_date, f"{weekday} {validation.format_date(session_date)[:5]}"
+
+
+def build_level_summary(frame, level, period_start=None):
+    """Return one row per bar: the label, the five counts, rate and completeness.
+
+    Blocks are in order of their first date, courses by code, weeks and days in
+    date order. Weeks are counted from the Monday on or before period_start (the
+    course's start), or before the first date in the frame.
+    """
+    columns = [CHART_LABEL_COLUMN] + COUNT_COLUMNS + ["attendance_rate", "completeness"]
+    if frame.empty:
         return pd.DataFrame(columns=columns)
 
-    include_year = labels_need_year(session_summary)
-    rows = []
-    for index, row in session_summary.iterrows():
-        label = make_session_label(row["session_date"], row["session_id"], include_year)
-        chart_row = {
-            CHART_LABEL_COLUMN: label,
-            CHART_COURSE_COLUMN: row["course_code"],
-        }
-        for status in STATUS_ORDER:
-            chart_row[status] = row[status]
-        rows.append(chart_row)
+    start = period_start
+    if start is None:
+        start = frame["session_date"].min()
+    first_monday = find_first_monday(start)
 
+    # Blocks are ordered by their first date, so they need that date in their key.
+    block_starts = {}
+    if level == LEVEL_BLOCK:
+        blocks = frame["block_id"].fillna(NO_BLOCK_LABEL)
+        for block_id, group in frame.groupby(blocks):
+            block_starts[block_id] = group["session_date"].min()
+
+    keys = []
+    labels = []
+    for index, row in frame.iterrows():
+        key, label = find_group(row, level, first_monday)
+        if level == LEVEL_BLOCK:
+            key = (block_starts[key], key)
+        keys.append(key)
+        labels.append(label)
+
+    grouped = frame.assign(chart_key=keys, chart_label=labels)
+    rows = []
+    for (key, label), group in grouped.groupby(["chart_key", "chart_label"], sort=True):
+        rows.append(build_summary_row({CHART_LABEL_COLUMN: label}, group))
     return pd.DataFrame(rows, columns=columns)
+
+
+def build_drilldown_chart_data(frame, block_choice, course_code, by_day=False,
+                               period_start=None):
+    """Return (level, summary) for both Dashboard charts, choosing the level from the
+    filters (choose_chart_level) and grouping the records at that level."""
+    level = choose_chart_level(block_choice, course_code, by_day)
+    return level, build_level_summary(frame, level, period_start)
+
+
+def build_rate_bars(summary):
+    """Return the bars of the rate chart: label and rate, without bars that have no rate."""
+    bars = summary[summary["attendance_rate"].notna()]
+    bars = bars[[CHART_LABEL_COLUMN, "attendance_rate"]]
+    return bars.rename(columns={"attendance_rate": CHART_VALUE_COLUMN}).reset_index(drop=True)
 
 
 def make_status_chart_long(status_chart_data):
-    """Return one row per session and status, the shape a stacked bar chart needs (FR-20).
+    """Return one row per bar and status, the shape a stacked bar chart needs (FR-20).
 
-    The 'Stack order' column puts Present at the bottom, then Absent, then Unknown on top.
+    status_chart_data is a level summary (build_level_summary). The 'Stack order'
+    column puts Present at the bottom and Unknown on top.
     """
     rows = []
     for index, row in status_chart_data.iterrows():
@@ -365,15 +455,42 @@ def split_by_threshold(student_summary, threshold):
 
 # ---------- Reports (FR-16, FR-17) ----------
 
+def describe_session_type(session_id, session_type):
+    """Return 'Class', or 'Tutorial T2' with the tutorial's number (Stage 7).
+
+    Session IDs are never shown; the type and number say which session it is.
+    """
+    if session_type != validation.TUTORIAL:
+        return validation.CLASS
+    return f"Tutorial T{get_tutorial_number({'session_id': session_id})}"
+
+
+def add_day_and_type(frame):
+    """Return a copy of a records frame with 'Day' (Monday...) and 'Type' columns."""
+    with_columns = frame.copy()
+    days = []
+    types = []
+    for index, row in frame.iterrows():
+        days.append(validation.weekday_name(row["session_date"]))
+        types.append(describe_session_type(row["session_id"], row["session_type"]))
+    with_columns["Day"] = days
+    with_columns["Type"] = types
+    return with_columns
+
+
 def build_attendance_report(frame):
-    """Return the filtered attendance table with readable column names (FR-16)."""
+    """Return the filtered attendance table with readable column names (FR-16).
+
+    Each session is shown as Date, Day and Type, never by its ID (Stage 7).
+    """
     report = frame.sort_values(["session_date", "session_id", "student_id"], ignore_index=True)
-    report = report[RECORD_COLUMNS]
+    report = add_day_and_type(report)
+    report = report[["student_id", "full_name", "course_code", "session_date", "Day", "Type",
+                     "status"]]
     return report.rename(columns={
         "student_id": "Student ID",
         "full_name": "Full name",
         "course_code": "Course",
-        "session_id": "Session",
         "session_date": "Date",
         "status": "Status",
     })
@@ -533,14 +650,14 @@ def find_streak_alerts(streak_table, minimum):
 
 
 def build_student_history(frame):
-    """Return one student's sessions in date order: session, course, date and status.
+    """Return one student's sessions in date order: course, date, day, type and status.
 
     Sessions with no record already have the status 'Unknown' (see build_records_frame).
     """
     history = frame.sort_values(["session_date", "session_id"], ignore_index=True)
-    history = history[["session_id", "course_code", "session_date", "status"]]
+    history = add_day_and_type(history)
+    history = history[["course_code", "session_date", "Day", "Type", "status"]]
     return history.rename(columns={
-        "session_id": "Session",
         "course_code": "Course",
         "session_date": "Date",
         "status": "Status",

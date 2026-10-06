@@ -222,139 +222,67 @@ class TestFilteredCalculations(SeedDataTestCase):
         self.assertTrue(filtered.empty)
         self.assertEqual(metrics["sessions"], 0)
         self.assertEqual(analytics.format_rate(metrics["attendance_rate"]), "N/A")
-        self.assertTrue(analytics.build_rate_chart_data(filtered).empty)
+        self.assertTrue(analytics.build_level_summary(filtered, analytics.LEVEL_COURSE).empty)
 
-    def test_chart_data_in_date_order(self):
-        """FR-14, BR-23: one rate per session in date order, with DD/MM labels and the course."""
-        chart_data = analytics.build_rate_chart_data(self.filter_all())
-        labels = list(chart_data[analytics.CHART_LABEL_COLUMN])
-        courses = list(chart_data[analytics.CHART_COURSE_COLUMN])
+    def test_course_level_counts(self):
+        """FR-14, FR-20 (Stage 7): one bar per course. PY101 has 10 students x 4 sessions:
+        33 Present, 5 Absent, 2 Unknown; DS102 has 9 x 4: 30 Present, 4 Absent, 2 Unknown."""
+        summary = analytics.build_level_summary(self.filter_all(), analytics.LEVEL_COURSE)
 
-        self.assertEqual(labels, [
-            "07/09 PY101-W1", "09/09 DS102-W1", "14/09 PY101-W2", "16/09 DS102-W2",
-            "21/09 PY101-W3", "23/09 DS102-W3", "28/09 PY101-W4", "30/09 DS102-W4",
-        ])
-        self.assertEqual(courses[0], "PY101")
-        self.assertEqual(courses[1], "DS102")
-        self.assertEqual(chart_data[analytics.CHART_VALUE_COLUMN].iloc[0], 90.0)
+        self.assertEqual(list(summary[analytics.CHART_LABEL_COLUMN]), ["DS102", "PY101"])
+        ds102 = summary.iloc[0]
+        py101 = summary.iloc[1]
+        self.assertEqual((ds102["Present"], ds102["Absent"], ds102["Unknown"]), (30, 4, 2))
+        self.assertEqual((py101["Present"], py101["Absent"], py101["Unknown"]), (33, 5, 2))
+        self.assertEqual(py101["attendance_rate"], 86.84)
 
-    def test_chart_label_of_generated_ids(self):
-        """FR-14, BR-23: generated IDs lose their date: '07/09 PY101', '10/09 PY101-T1'."""
-        self.assertEqual(
-            analytics.make_session_label("2026-09-07", "PY101-2026-09-07", False), "07/09 PY101"
-        )
-        self.assertEqual(
-            analytics.make_session_label("2026-09-10", "PY101-2026-09-10-T1", False),
-            "10/09 PY101-T1",
-        )
+    def test_courses_without_block_are_one_bar(self):
+        """FR-14 (Stage 7): courses of an older database form one "No block" bar."""
+        summary = analytics.build_level_summary(self.filter_all(), analytics.LEVEL_BLOCK)
 
-    def test_chart_same_date_two_courses(self):
-        """FR-14: two sessions on the same date in different courses give two rows,
-        in date-then-session order."""
-        database.add_session(self.connection, "DS102-W0", "DS102", "2026-09-07")
-        database.record_attendance(self.connection, "004", "DS102-W0", "Present")
-        self.records = self.load_records()
+        self.assertEqual(list(summary[analytics.CHART_LABEL_COLUMN]), ["No block"])
+        self.assertEqual(summary["attendance_rate"].iloc[0], 87.5)
 
-        chart_data = analytics.build_rate_chart_data(self.filter_all())
-        labels = list(chart_data[analytics.CHART_LABEL_COLUMN])
-        courses = list(chart_data[analytics.CHART_COURSE_COLUMN])
-
-        self.assertEqual(len(labels), 9)
-        self.assertEqual(labels[0], "07/09 DS102-W0")
-        self.assertEqual(labels[1], "07/09 PY101-W1")
-        self.assertEqual(courses[0], "DS102")
-        self.assertEqual(courses[1], "PY101")
-        self.assertEqual(labels[2], "09/09 DS102-W1")
-
-    def test_chart_labels_show_year_across_years(self):
-        """FR-14: when sessions are in more than one year, the labels include the year."""
-        database.add_session(self.connection, "PY101-W99", "PY101", "2027-01-11")
-        database.record_attendance(self.connection, "001", "PY101-W99", "Present")
-        self.records = self.load_records()
-
-        chart_data = analytics.build_rate_chart_data(self.filter_all())
-        labels = list(chart_data[analytics.CHART_LABEL_COLUMN])
-
-        self.assertEqual(labels[0], "07/09/2026 PY101-W1")
-        self.assertEqual(labels[-1], "11/01/2027 PY101-W99")
-
-    def test_chart_one_course(self):
-        """FR-14: with one course selected, every bar belongs to that course."""
-        filtered = analytics.filter_records(self.records, "PY101", "2026-09-01", "2026-09-30")
-        chart_data = analytics.build_rate_chart_data(filtered)
-
-        self.assertEqual(len(chart_data), 4)
-        self.assertEqual(set(chart_data[analytics.CHART_COURSE_COLUMN]), {"PY101"})
-
-    def test_status_chart_counts_add_up_to_enrolled(self):
-        """FR-20: per session, Present + Absent + Unknown = students enrolled in its course."""
-        status_data = analytics.build_status_chart_data(self.filter_all())
-        self.assertEqual(len(status_data), 8)
-
-        for index, row in status_data.iterrows():
-            course_code = row[analytics.CHART_COURSE_COLUMN]
-            enrolled = len(database.get_enrolled_students(self.connection, course_code))
-            total = 0
-            for status in analytics.STATUS_ORDER:
-                total = total + row[status]
-            self.assertEqual(total, enrolled, row[analytics.CHART_LABEL_COLUMN])
-
-    def test_status_chart_by_hand(self):
-        """FR-20: PY101-W2 has 8 Present, 1 Absent (006) and 1 Unknown (003)."""
-        status_data = analytics.build_status_chart_data(self.filter_all())
-        session = status_data[status_data[analytics.CHART_LABEL_COLUMN] == "14/09 PY101-W2"]
-
-        self.assertEqual(session["Present"].iloc[0], 8)
-        self.assertEqual(session["Absent"].iloc[0], 1)
-        self.assertEqual(session["Unknown"].iloc[0], 1)
-
-    def test_status_chart_same_labels_and_order_as_rate_chart(self):
-        """FR-20, FR-14: the status chart uses the same labels in the same order."""
-        rate_data = analytics.build_rate_chart_data(self.filter_all())
-        status_data = analytics.build_status_chart_data(self.filter_all())
-
-        self.assertEqual(
-            list(status_data[analytics.CHART_LABEL_COLUMN]),
-            list(rate_data[analytics.CHART_LABEL_COLUMN]),
-        )
-
-    def test_status_chart_keeps_unrecorded_session(self):
-        """FR-20: a session with no records is shown as all Unknown (the rate chart omits it)."""
+    def test_rate_bars_leave_out_unrecorded(self):
+        """FR-14, FR-20: a day with no records has no rate bar but a full Unknown status bar."""
         database.add_session(self.connection, "PY101-W5", "PY101", "2026-10-05")
         self.records = self.load_records()
 
-        status_data = analytics.build_status_chart_data(self.filter_all())
-        last = status_data.iloc[-1]
-
-        self.assertEqual(last[analytics.CHART_LABEL_COLUMN], "05/10 PY101-W5")
+        summary = analytics.build_level_summary(self.filter_all(), analytics.LEVEL_DAY)
+        last = summary.iloc[-1]
+        self.assertEqual(last[analytics.CHART_LABEL_COLUMN], "Mon 05/10")
         self.assertEqual((last["Present"], last["Absent"], last["Unknown"]), (0, 0, 10))
 
-    def test_status_chart_long_shape(self):
-        """FR-20, FR-26: one row per session and status, in the order Present to Unknown."""
-        status_data = analytics.build_status_chart_data(self.filter_all())
-        long_data = analytics.make_status_chart_long(status_data)
+        bars = analytics.build_rate_bars(summary)
+        self.assertEqual(len(bars), len(summary) - 1)
+        self.assertNotIn("Mon 05/10", list(bars[analytics.CHART_LABEL_COLUMN]))
 
-        self.assertEqual(len(long_data), 8 * 5)
-        first_session = long_data.iloc[0:5]
+    def test_status_chart_long_shape(self):
+        """FR-20, FR-26: one row per bar and status, in the order Present to Unknown."""
+        summary = analytics.build_level_summary(self.filter_all(), analytics.LEVEL_COURSE)
+        long_data = analytics.make_status_chart_long(summary)
+
+        self.assertEqual(len(long_data), 2 * 5)
+        first_bar = long_data.iloc[0:5]
         self.assertEqual(
-            list(first_session[analytics.CHART_STATUS_COLUMN]),
+            list(first_bar[analytics.CHART_STATUS_COLUMN]),
             ["Present", "Late", "Excused", "Absent", "Unknown"],
         )
-        self.assertEqual(list(first_session[analytics.CHART_COUNT_COLUMN]), [9, 0, 0, 1, 0])
+        self.assertEqual(list(first_bar[analytics.CHART_COUNT_COLUMN]), [30, 0, 0, 4, 2])
 
     def test_status_chart_keep_statuses(self):
         """FR-20: the status filter keeps only the chosen statuses, in stack order."""
         long_data = analytics.make_status_chart_long(
-            analytics.build_status_chart_data(self.filter_all())
+            analytics.build_level_summary(self.filter_all(), analytics.LEVEL_COURSE)
         )
 
         only_unknown = analytics.keep_statuses(long_data, ["Unknown"])
-        self.assertEqual(len(only_unknown), 8)
+        self.assertEqual(len(only_unknown), 2)
         self.assertEqual(set(only_unknown[analytics.CHART_STATUS_COLUMN]), {"Unknown"})
         self.assertEqual(only_unknown[analytics.CHART_COUNT_COLUMN].sum(), 4)
 
         two_statuses = analytics.keep_statuses(long_data, ["Unknown", "Present"])
-        self.assertEqual(len(two_statuses), 16)
+        self.assertEqual(len(two_statuses), 4)
         self.assertEqual(
             list(two_statuses[analytics.CHART_STATUS_COLUMN].iloc[0:2]), ["Present", "Unknown"]
         )
@@ -393,7 +321,7 @@ class TestFilteredCalculations(SeedDataTestCase):
         report = analytics.build_attendance_report(filtered)
         self.assertEqual(
             list(report.columns),
-            ["Student ID", "Full name", "Course", "Session", "Date", "Status"],
+            ["Student ID", "Full name", "Course", "Date", "Day", "Type", "Status"],
         )
         self.assertEqual(len(report), 76)
 
@@ -554,13 +482,14 @@ class TestSingleStudentReport(SeedDataTestCase):
         student = analytics.filter_student(self.filter_all(), "008")
         history = analytics.build_student_history(student)
 
-        self.assertEqual(list(history.columns), ["Session", "Course", "Date", "Status"])
+        self.assertEqual(list(history.columns), ["Course", "Date", "Day", "Type", "Status"])
         self.assertEqual(len(history), 8)
         self.assertEqual(list(history["Date"]), sorted(history["Date"]))
-        self.assertEqual(history["Session"].iloc[0], "PY101-W1")
-        self.assertEqual(history["Session"].iloc[1], "DS102-W1")
+        self.assertEqual(list(history["Course"].iloc[0:2]), ["PY101", "DS102"])
+        self.assertEqual(list(history["Day"].iloc[0:2]), ["Monday", "Wednesday"])
+        self.assertEqual(history["Type"].iloc[0], "Class")
 
-        ds102_w3 = history[history["Session"] == "DS102-W3"].iloc[0]
+        ds102_w3 = history[history["Date"] == "2026-09-23"].iloc[0]
         self.assertEqual(ds102_w3["Status"], "Unknown")
 
     def test_student_report_respects_filters(self):

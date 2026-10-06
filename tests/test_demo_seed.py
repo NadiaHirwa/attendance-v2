@@ -224,14 +224,14 @@ class TestDemoFiles(SeedV3TestCase):
         return len(result["accepted"]), len(result["duplicates"]), len(result["rejected"])
 
     def test_messy_file_counts(self):
-        """FR-31: messy_import.csv gives 39 auto-fixes, 5 suggestions, 6 / 2 / 11."""
+        """FR-31: messy_import.csv gives 39 auto-fixes, 7 suggestions, 6 / 2 / 11."""
         result = self.review_messy_file(accept_all=False)
 
         self.assertEqual(len(result["fixes"]), 39)
         kinds = []
         for suggestion in result["suggestions"]:
             kinds.append(suggestion["kind"])
-        self.assertEqual(kinds, ["S1", "S2", "S2", "S3", "S4"])
+        self.assertEqual(kinds, ["S5", "S5", "S1", "S2", "S2", "S3", "S4"])
         self.assertEqual(self.count_result(result), (6, 2, 11))
 
         reasons = ""
@@ -252,11 +252,11 @@ class TestDemoFiles(SeedV3TestCase):
         self.assertIn('Suggestion: "Use file: Present"', reasons)
 
     def test_messy_file_counts_after_accepting_all(self):
-        """FR-31: with every suggestion accepted, 11 accepted / 2 duplicates / 6 rejected."""
+        """FR-31: with every suggestion accepted, 13 accepted / 2 duplicates / 4 rejected."""
         result = self.review_messy_file(accept_all=True)
 
-        self.assertEqual(importer.count_accepted_suggestions(result["suggestions"]), 5)
-        self.assertEqual(self.count_result(result), (11, 2, 6))
+        self.assertEqual(importer.count_accepted_suggestions(result["suggestions"]), 7)
+        self.assertEqual(self.count_result(result), (13, 2, 4))
         new_ids = {}
         for row in result["accepted"]:
             new_ids[row["row"]] = (row["student_id"], row["full_name"])
@@ -294,13 +294,16 @@ class TestDemoFiles(SeedV3TestCase):
 
         Adds 004's MA103 tutorial (P), new 013 in PY101 from 21/09 (5 expected: A, P),
         new 015 in MA103 from 22/09 (6 expected: P), and 002's 08/09 Absent becomes Present.
-        Present 483, Late 11, Excused 6, Absent 11, Unknown 15 - 1 + 3 + 5 = 22;
-        expected 522 + 5 + 6 = 533. Rate 494 / 505 = 97.82%; completeness 511 / 533 = 95.87%.
+        S5 (Stage 7) adds two tutorials for 001 (Present): PY101 Saturday 12/09 (11 expected:
+        010 joins on 14/09) and DS102 on the 16/09 holiday (10 expected).
+        Present 479 + 4 + 2 = 485, Late 11, Excused 6, Absent 11,
+        Unknown 15 - 1 + 3 + 5 + 10 + 9 = 41; expected 522 + 5 + 6 + 11 + 10 = 554.
+        Rate 496 / 507 = 97.83%; completeness 513 / 554 = 92.60%.
         """
         result = self.review_messy_file(accept_all=True)
         importer.apply_import(self.connection, result["accepted"], "messy_import.csv")
 
-        self.assert_totals((483, 11, 6, 11, 22), 533, "97.82%", "95.87%")
+        self.assert_totals((485, 11, 6, 11, 41), 554, "97.83%", "92.60%")
         row = self.connection.execute(
             "SELECT status, source FROM attendance WHERE student_id = ? AND session_id = ?",
             ("002", "PY101-2026-09-08"),

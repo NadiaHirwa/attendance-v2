@@ -1,4 +1,4 @@
-# Attendance Management and Analytics System (Version 3)
+# Attendance Management and Analytics System (Version 3.1)
 
 A Streamlit app that organises teaching in 3-week **blocks**, generates a class for every
 weekday of each course (with tutorials on any day), records Present / Late / Excused / Absent
@@ -47,19 +47,28 @@ student per course.
 
 The app opens in the browser with four tabs:
 
-- **Dashboard**: metrics, attendance rate by session, status chart, students below a
-  threshold and absence alerts.
+- **Dashboard**: KPI cards (attendance rate, completeness, deducted marks, students below
+  the threshold, absence alerts), then the attendance rate and recording status charts,
+  which drill down from blocks to courses to weeks (or days), the threshold list and the
+  absence alerts.
 - **Manage Attendance**, in sub-tabs: **Blocks & Courses** (class days are generated),
   **Students** (search, profile, enroll, late start or early leave), **Class days & Tutorials**
   (add tutorials, remove a holiday), **Record attendance** (block → course → day, "Mark all
   Present", then the exceptions) and **Settings** (the Late and Absent deductions).
 - **Import & Validate**: upload a CSV file and review the **Auto-fixed** values, the
-  **Suggestions** to accept and the **Rejected** rows, then confirm. A cleaned file can be
+  **Suggestions** to accept and the **Rejected** rows, which you can correct in the table
+  and **Re-check**, then confirm. A cleaned file can be
   downloaded. Try `demo_data/clean_import.csv` and `demo_data/messy_import.csv`.
 - **Reports**: per-student summaries with deducted marks, the deductions export, the class
   register per course and week, and the single-student report with its weekly view.
 
-The Block → Course → date filters for the Dashboard and Reports are in the sidebar.
+The Block → Course → Week filters for the Dashboard and Reports are in the sidebar;
+tick "Custom dates" for any other date range.
+
+The theme (light or dark) follows the device's setting. To switch it, open the
+**⋮** menu at the top right and choose **Light** or **Dark** (**System** follows the
+device again). In Streamlit versions with a Settings dialog, the choice is under
+**⋮ → Settings**.
 
 If the database has no courses when the app starts, the demo data is created automatically.
 The sidebar also has a **Reset demo data** button (tick the confirmation box first), which

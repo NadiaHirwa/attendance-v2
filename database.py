@@ -1236,18 +1236,20 @@ def get_expected_records(connection):
 
     A student is expected only for sessions inside their enrollment dates (BR-15).
     Each row has student_id, full_name, course_code, session_id, session_date, status,
-    enrollment_start and enrollment_end. The status is None when nothing was recorded.
-    Unknown is never stored (BR-12).
+    enrollment_start, enrollment_end, session_type and block_id (None for a course with
+    no block). The status is None when nothing was recorded. Unknown is never stored (BR-12).
     """
     rows = connection.execute(
         """
         SELECT students.student_id, students.full_name, sessions.course_code,
                sessions.session_id, sessions.session_date, attendance.status,
                enrollments.start_date AS enrollment_start,
-               enrollments.end_date AS enrollment_end
+               enrollments.end_date AS enrollment_end,
+               sessions.session_type, courses.block_id
         FROM enrollments
         JOIN students ON students.student_id = enrollments.student_id
         JOIN sessions ON sessions.course_code = enrollments.course_code
+        JOIN courses ON courses.course_code = enrollments.course_code
         LEFT JOIN attendance
             ON attendance.student_id = enrollments.student_id
             AND attendance.session_id = sessions.session_id

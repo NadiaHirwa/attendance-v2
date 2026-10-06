@@ -25,14 +25,18 @@ STATUS_COLORS = ["#0072B2", "#56B4E9", "#CC79A7", "#E69F00", "#999999"]
 # Width in pixels, so the longest import reasons fit without being cut off.
 REASON_COLUMN_WIDTH = 1500
 ALL_STUDENTS = "All students"
-ALL_BLOCKS = "All blocks"
+ALL_BLOCKS = analytics.ALL_BLOCKS
 ALL_WEEKS = "All weeks"
+THRESHOLD_KEY = "threshold"
+STREAK_KEY = "streak_minimum"
+# The status names under the Dashboard cards, in the order of STATUS_COLORS.
+STATUS_DOT_LABELS = ["Present", "Late", "Excused", "Absent", "Not recorded"]
 # Every date input shows dates as DD/MM/YYYY, like the rest of the app (BR-23).
 DATE_INPUT_FORMAT = "DD/MM/YYYY"
 NO_COURSES_MESSAGE = "No courses yet. Create a course first."
 NO_BLOCKS_MESSAGE = "No blocks yet. Create a block first."
 # Courses from a database made before Version 3 have no block.
-NO_BLOCK_LABEL = "No block"
+NO_BLOCK_LABEL = analytics.NO_BLOCK_LABEL
 NO_STUDENTS_MESSAGE = "No students yet. Add a student first."
 NO_DATA_MESSAGE = (
     "No sessions with enrolled students yet. Create a course, a session and a student "
@@ -80,15 +84,14 @@ def get_student_choices(connection):
 
 
 def describe_session(session):
-    """Return a label like 'Mon 07/09/2026 - Class' or 'Sat 12/09/2026 - Tutorial T1'."""
+    """Return a label like 'Mon 07/09/2026 - Class' or 'Sat 12/09/2026 - Tutorial T1'.
+
+    Session IDs are never shown (Stage 7): date, day and type say which session it is.
+    """
     session_date = session["session_date"]
     weekday = validation.weekday_name(session_date)[:3]
-    label = f"{weekday} {validation.format_date(session_date)} - {session['session_type']}"
-
-    # A tutorial's number is the last part of its ID, like 'T1' in 'PY101-2026-09-10-T1'.
-    if session["session_type"] == validation.TUTORIAL:
-        label = label + " " + session["session_id"].split("-")[-1]
-    return label
+    session_type = analytics.describe_session_type(session["session_id"], session["session_type"])
+    return f"{weekday} {validation.format_date(session_date)} - {session_type}"
 
 
 def get_session_choices(connection, course_code):
@@ -366,6 +369,10 @@ def show_course_list(connection):
 def show_add_student(connection):
     """Show the form to add a student: details only, no course yet (FR-04)."""
     st.subheader("Add a student")
+    st.caption(
+        "Only enrolled students appear in Record attendance, the Dashboard and the class "
+        "register. Enroll the new student in a course from their profile."
+    )
 
     with st.form("add_student_form"):
         id_text = st.text_input("Student ID", placeholder="001")
@@ -887,35 +894,46 @@ def show_student_profile(connection):
     student_label = st.selectbox("Student", list(student_choices), key="profile_student")
     student_id = student_choices[student_label]
 
+    # Every title names the student, so it is clear whose profile is open (Stage 7).
+    st.markdown(f"#### {student_label}")
     show_profile_table(connection, student_id)
 
-    with st.expander("Enroll in a course"):
+    with st.expander(f"Enroll {student_label} in a course"):
         show_enroll_student(connection, student_id)
 
-    with st.expander("Late start or early leave"):
+    with st.expander(f"Late start or early leave: {student_label}"):
         show_change_enrollment_dates(connection, student_id)
 
-    with st.expander("Rename"):
+    with st.expander(f"Rename {student_label}"):
         show_rename_student(connection, student_id)
 
-    with st.expander("Un-enroll from a course"):
+    with st.expander(f"Un-enroll {student_label} from a course"):
         show_unenroll_student(connection, student_id)
 
-    with st.expander("Delete the student"):
+    with st.expander(f"Delete {student_label}"):
         show_delete_student(connection, student_id, student_label)
 
 
 # ---------- Class days & Tutorials (BR-20, BR-21) ----------
 
 def show_session_list(connection, course_code):
-    """List a course's class days and tutorials in date order (BR-20, BR-21, BR-23)."""
+    """List a course's class days and tutorials in date order (BR-20, BR-21, BR-23).
+
+    Columns: Date, Day, Type, Records saved and Not recorded; no session IDs (Stage 7).
+    """
+    records = analytics.build_records_frame(database.get_expected_records(connection))
     rows = []
     for session in database.get_sessions_for_course(connection, course_code):
+        session_records = records[records["session_id"] == session["session_id"]]
+        not_recorded = int((session_records["status"] == analytics.UNKNOWN).sum())
         rows.append({
             "Date": validation.format_date(session["session_date"]),
             "Day": validation.weekday_name(session["session_date"]),
-            "Type": session["session_type"],
-            "Session ID": session["session_id"],
+            "Type": analytics.describe_session_type(
+                session["session_id"], session["session_type"]
+            ),
+            "Records saved": len(session_records) - not_recorded,
+            "Not recorded": not_recorded,
         })
 
     if not rows:
@@ -1313,8 +1331,14 @@ def show_search_students(connection):
             "Courses": join_course_codes(connection, student["student_id"]),
         })
 
-    st.write(f"{len(rows)} match(es) found. The first one is opened in the profile below.")
     first_match = matches[0]
+    if len(rows) == 1:
+        st.write(f"1 match, showing {first_match['student_id']} in the profile below.")
+    else:
+        st.write(
+            f"{len(rows)} matches, showing {first_match['student_id']}; "
+            "choose another in the Student box."
+        )
     st.session_state["open_profile"] = f"{first_match['student_id']} - {first_match['full_name']}"
     st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
 
@@ -1344,7 +1368,8 @@ def show_last_import_result():
         return
 
     st.success(
-        f"Import of {result['filename']} finished. Auto-fixes: {result['fixes']}. "
+        f"Import of {result['filename']} finished. Edited by you: {result['edits']}. "
+        f"Auto-fixes: {result['fixes']}. "
         f"Accepted suggestions: {result['accepted_suggestions']}. "
         f"Saved: {result['accepted']}. Skipped duplicates: {result['duplicates']}. "
         f"Rejected: {result['rejected']}."
@@ -1361,17 +1386,19 @@ def show_last_import_result():
         )
 
 
-def validate_upload(connection, uploaded_file, rows, accepted_keys=()):
+def validate_upload(connection, uploaded_file, rows, accepted_keys=(), edits=None):
     """Validate the rows and keep the result in session_state (the database is not changed).
 
-    accepted_keys are the suggestions ticked under Suggestions (FR-31); Validate starts
-    with none, so every suggestion is unticked by default.
+    accepted_keys are the suggestions ticked under Suggestions (FR-31); edits are the
+    values typed in the Rejected table, by row number (Stage 7). Validate starts with
+    neither, so every suggestion is unticked and no value is edited.
     """
-    result = importer.review_rows(connection, rows, accepted_keys)
+    edits = dict(edits or {})
+    result = importer.review_rows(connection, rows, accepted_keys, edits)
     accepted = result["accepted"]
     duplicates = result["duplicates"]
 
-    # Each validation gets new widget keys, so old ticks are not shown again.
+    # Each validation gets new widget keys, so old ticks and edits are not shown again.
     run = st.session_state.get("import_validation_run", 0) + 1
     st.session_state["import_validation_run"] = run
 
@@ -1380,8 +1407,13 @@ def validate_upload(connection, uploaded_file, rows, accepted_keys=()):
         "filename": uploaded_file.name,
         "run": run,
         "accepted": accepted,
+        "accepted_keys": list(accepted_keys),
+        "edits": edits,
+        "edit_count": len(result["edits"]),
+        "fix_count": len(result["fixes"]),
         "suggestions": result["suggestions"],
-        "fixes_table": importer.make_fixes_table(result["fixes"]),
+        # The user's edits come first, then the automatic fixes.
+        "fixes_table": importer.make_fixes_table(result["edits"] + result["fixes"]),
         "cleaned_csv": importer.make_cleaned_csv(accepted, duplicates),
         # Dates are shown as DD/MM/YYYY (BR-23); "accepted" keeps the stored form for saving.
         "accepted_table": analytics.format_date_columns(
@@ -1390,9 +1422,8 @@ def validate_upload(connection, uploaded_file, rows, accepted_keys=()):
         "duplicates_table": analytics.format_date_columns(
             importer.make_table(duplicates, with_reason=True)
         ),
-        "rejected_table": analytics.format_date_columns(
-            importer.make_table(result["rejected"], with_reason=True)
-        ),
+        # Rejected rows keep the file's text (after edits), so they can be corrected.
+        "rejected_table": importer.make_table(result["rejected"], with_reason=True),
     }
 
     # A new validation replaces the result of an earlier import.
@@ -1461,8 +1492,58 @@ def show_suggestions(connection, uploaded_file, rows, validation_result):
                 accepted_keys.append(suggestion["key"])
 
         if st.form_submit_button("Apply suggestions"):
-            validate_upload(connection, uploaded_file, rows, accepted_keys)
+            validate_upload(
+                connection, uploaded_file, rows, accepted_keys, validation_result["edits"]
+            )
             st.rerun()
+
+
+def show_rejected_rows(connection, uploaded_file, rows, validation_result):
+    """Show the rejected rows in an editable table; Re-check validates the file again.
+
+    The six file columns can be edited; the row number and reason cannot. Edits are
+    kept by row number, listed as "edited by you", included in the cleaned file and
+    saved only after Confirm (Stage 7).
+    """
+    rejected_table = validation_result["rejected_table"]
+    st.markdown("**Rejected** (fix a value in the table, then click Re-check)")
+
+    run = validation_result["run"]
+    with st.form(f"rejected_form_{run}"):
+        edited_table = st.data_editor(
+            rejected_table,
+            key=f"rejected_editor_{run}",
+            hide_index=True,
+            width="stretch",
+            num_rows="fixed",
+            disabled=[importer.ROW_COLUMN, importer.REASON_COLUMN],
+            column_config={
+                importer.ROW_COLUMN: st.column_config.NumberColumn("row", width="small"),
+                importer.REASON_COLUMN: st.column_config.TextColumn(
+                    "reason", width=REASON_COLUMN_WIDTH
+                ),
+            },
+        )
+        submitted = st.form_submit_button("Re-check")
+
+    if submitted:
+        edits = importer.collect_edits(
+            validation_result["edits"],
+            rejected_table.to_dict("records"),
+            edited_table.to_dict("records"),
+        )
+        validate_upload(
+            connection, uploaded_file, rows, validation_result["accepted_keys"], edits
+        )
+        st.rerun()
+
+    st.download_button(
+        "Download rejected rows (CSV)",
+        data=rejected_table.to_csv(index=False),
+        file_name="rejected_rows.csv",
+        mime="text/csv",
+        key="download_rejected_review",
+    )
 
 
 def show_review(connection, uploaded_file, rows, validation_result):
@@ -1474,7 +1555,7 @@ def show_review(connection, uploaded_file, rows, validation_result):
     suggestions = validation_result["suggestions"]
 
     count_columns = st.columns(5)
-    count_columns[0].metric("Auto-fixes", len(fixes_table))
+    count_columns[0].metric("Auto-fixes", validation_result["fix_count"])
     count_columns[1].metric(
         "Accepted suggestions",
         f"{importer.count_accepted_suggestions(suggestions)} of {len(suggestions)}",
@@ -1483,7 +1564,7 @@ def show_review(connection, uploaded_file, rows, validation_result):
     count_columns[3].metric("Skipped duplicates", len(duplicates_table))
     count_columns[4].metric("Rejected", len(rejected_table))
 
-    st.markdown("**Auto-fixed** (applied automatically)")
+    st.markdown("**Auto-fixed** (applied automatically, and your edits)")
     if fixes_table.empty:
         st.caption("Nothing needed fixing.")
     else:
@@ -1511,15 +1592,7 @@ def show_review(connection, uploaded_file, rows, validation_result):
         )
 
     if not rejected_table.empty:
-        st.markdown("**Rejected**")
-        show_table_with_reasons(rejected_table)
-        st.download_button(
-            "Download rejected rows (CSV)",
-            data=rejected_table.to_csv(index=False),
-            file_name="rejected_rows.csv",
-            mime="text/csv",
-            key="download_rejected_review",
-        )
+        show_rejected_rows(connection, uploaded_file, rows, validation_result)
 
 
 def confirm_import(connection, validation_result):
@@ -1538,7 +1611,8 @@ def confirm_import(connection, validation_result):
 
     st.session_state["import_result"] = {
         "filename": validation_result["filename"],
-        "fixes": len(validation_result["fixes_table"]),
+        "edits": validation_result["edit_count"],
+        "fixes": validation_result["fix_count"],
         "accepted_suggestions": importer.count_accepted_suggestions(
             validation_result["suggestions"]
         ),
@@ -1619,17 +1693,19 @@ def get_filter_course_codes(connection, block_id):
 
 
 def show_filters(connection):
-    """Show the Block -> Course -> date range filters in the sidebar (FR-30).
+    """Show the Block -> Course -> Week filters in the sidebar (FR-30, Stage 7).
 
-    Returns (filtered records, text describing the filters). The records are None
-    when there is nothing to show yet; the text then explains why.
+    "Custom dates" shows a date range for rare cases; with "All blocks" it is the only
+    choice. Returns (filtered records, text describing the filters, view), where view
+    has the chosen 'block' and 'course' and the 'period_start' that weeks count from.
+    The records are None when there is nothing to show yet; the text then explains why.
     """
     st.sidebar.header("Dashboard and Reports filters")
 
     all_records = analytics.build_records_frame(database.get_expected_records(connection))
     earliest, latest = analytics.get_date_bounds(all_records)
     if earliest is None:
-        return None, NO_DATA_MESSAGE
+        return None, NO_DATA_MESSAGE, None
 
     # Block: "All blocks", each block, and "No block" for courses of an older database.
     block_options = {ALL_BLOCKS: ALL_BLOCKS}
@@ -1650,7 +1726,8 @@ def show_filters(connection):
     )
     course_code = course_options[course_label]
 
-    # The date range starts as the course's period, else the block's, else all dates.
+    # The period is the course's, else the block's, else all dates.
+    block = None
     block_period = None
     if block_id not in (ALL_BLOCKS, None):
         block = database.get_block(connection, block_id)
@@ -1659,22 +1736,43 @@ def show_filters(connection):
     if course_code != analytics.ALL_COURSES:
         course = database.get_course(connection, course_code)
         course_period = (course["start_date"], course["end_date"])
-    default_start, default_end = analytics.choose_filter_period(
+    start_date, end_date = analytics.choose_filter_period(
         all_records, block_period, course_period
     )
+    period_text = None
 
-    # No key: when the default changes, the widget starts again with the new range.
-    chosen_dates = st.sidebar.date_input(
-        "Date range",
-        value=(date.fromisoformat(default_start), date.fromisoformat(default_end)),
-        format=DATE_INPUT_FORMAT,
-    )
-    # While the user is picking, the range has only a start date.
-    if len(chosen_dates) != 2:
-        return None, "Choose an end date to finish the date range."
+    # Week: only inside one block. A week runs Monday to Sunday, so a weekend
+    # tutorial belongs to the week before it.
+    if block is not None:
+        weeks = analytics.build_week_options(block["start_date"], block["end_date"])
+        week_labels = [ALL_WEEKS]
+        for week in weeks:
+            week_labels.append(week["label"])
+        week_label = st.sidebar.selectbox("Week", week_labels, key=f"filter_week_{block_id}")
+        if week_label != ALL_WEEKS:
+            week = weeks[week_labels.index(week_label) - 1]
+            start_date = week["start"]
+            end_date = week["end"]
+            period_text = week_label
 
-    start_date = chosen_dates[0].isoformat()
-    end_date = chosen_dates[1].isoformat()
+    if st.sidebar.checkbox("Custom dates", key="filter_custom_dates"):
+        # No key: when the default changes, the widget starts again with the new range.
+        chosen_dates = st.sidebar.date_input(
+            "Date range",
+            value=(date.fromisoformat(start_date), date.fromisoformat(end_date)),
+            format=DATE_INPUT_FORMAT,
+        )
+        # While the user is picking, the range has only a start date.
+        if len(chosen_dates) != 2:
+            return None, "Choose an end date to finish the date range.", None
+        start_date = chosen_dates[0].isoformat()
+        end_date = chosen_dates[1].isoformat()
+        period_text = None
+
+    if period_text is None:
+        period_text = (
+            f"from {validation.format_date(start_date)} to {validation.format_date(end_date)}"
+        )
 
     if course_code == analytics.ALL_COURSES and block_id != ALL_BLOCKS:
         filtered = analytics.filter_records_by_courses(
@@ -1683,11 +1781,16 @@ def show_filters(connection):
     else:
         filtered = analytics.filter_records(all_records, course_code, start_date, end_date)
 
-    filter_text = (
-        f"Showing: {block_label.split(' - ')[0]}, {course_code}, "
-        f"from {validation.format_date(start_date)} to {validation.format_date(end_date)}."
-    )
-    return filtered, filter_text
+    # Weeks in the charts count from the course's start, else the block's.
+    period_start = None
+    if block_period is not None:
+        period_start = block_period[0]
+    if course_period is not None and course_period[0] is not None:
+        period_start = course_period[0]
+
+    filter_text = f"Showing: {block_label.split(' - ')[0]}, {course_code}, {period_text}."
+    view = {"block": block_id, "course": course_code, "period_start": period_start}
+    return filtered, filter_text, view
 
 
 def has_data_to_show(filtered_records, filter_text):
@@ -1720,53 +1823,104 @@ def show_status_counts(rates):
     columns[4].metric("Unknown", rates["unknown"])
 
 
-def show_metrics(filtered_records):
-    """Show the dashboard numbers (FR-13, FR-26)."""
-    metrics = analytics.calculate_dashboard_metrics(filtered_records)
+def show_kpi_cards(filtered_records, settings):
+    """Show the Dashboard cards, the status counts and what is counted (FR-13, Stage 7).
 
-    first_row = st.columns(4)
-    first_row[0].metric("Students", metrics["students"])
-    first_row[1].metric("Sessions", metrics["sessions"])
-    first_row[2].metric("Attendance rate", analytics.format_rate(metrics["attendance_rate"]))
-    first_row[3].metric("Completeness", analytics.format_rate(metrics["completeness"]))
+    The threshold and streak length come from their widgets further down the page.
+    """
+    threshold = st.session_state.get(THRESHOLD_KEY, analytics.DEFAULT_THRESHOLD)
+    minimum = st.session_state.get(STREAK_KEY, analytics.DEFAULT_STREAK_ALERT)
+    kpis = analytics.calculate_kpis(
+        filtered_records, settings["late"], settings["absent"], threshold, minimum
+    )
 
-    show_status_counts(metrics)
+    cards = [
+        ("Attendance rate", analytics.format_rate(kpis["attendance_rate"]),
+         "(Present + Late) / (Present + Late + Absent)"),
+        ("Completeness", analytics.format_rate(kpis["completeness"]),
+         "Recorded / expected"),
+        ("Deducted marks", kpis["deducted"],
+         f"Total: Late x {settings['late']} + Absent x {settings['absent']}"),
+        ("Students below threshold", kpis["below_threshold"],
+         f"Attendance rate below {threshold}% (slider below)"),
+        ("Absence alerts", kpis["alerts"],
+         f"Current absence streak of {minimum} or more"),
+    ]
+    columns = st.columns(len(cards))
+    for column, (label, value, help_text) in zip(columns, cards):
+        with column.container(border=True):
+            st.metric(label, value, help=help_text)
+
+    counts = [kpis["present"], kpis["late"], kpis["excused"], kpis["absent"], kpis["unknown"]]
+    parts = []
+    for color, label, count in zip(STATUS_COLORS, STATUS_DOT_LABELS, counts):
+        parts.append(f'<span style="color:{color}">&#9679;</span> {label} <b>{count}</b>')
+    st.markdown(" &nbsp;&nbsp; ".join(parts), unsafe_allow_html=True)
+    st.caption(
+        f"{kpis['students']} students · {kpis['class_days']} class days · "
+        f"{kpis['tutorials']} tutorials"
+    )
 
 
-def show_rate_chart(filtered_records):
-    """Show one chart: attendance rate by session in date order (FR-14)."""
-    st.subheader("Attendance rate by session")
+def show_drilldown_charts(filtered_records, view):
+    """Show the rate and status charts at the level the filters choose (FR-14, FR-20).
 
-    chart_data = analytics.build_rate_chart_data(filtered_records)
-    if chart_data.empty:
-        st.info(
-            "No attendance has been recorded for these sessions yet, "
-            "so there is nothing to chart."
-        )
+    All blocks: a bar per block. One block: per course. One course: per week, or
+    per day with "Show by day" (Stage 7).
+    """
+    by_day = False
+    if view["course"] != analytics.ALL_COURSES:
+        by_day = st.toggle("Show by day", key="chart_by_day")
+
+    level, summary = analytics.build_drilldown_chart_data(
+        filtered_records, view["block"], view["course"], by_day, view["period_start"]
+    )
+    show_rate_chart(summary, level)
+    st.divider()
+    show_status_chart(summary, level)
+
+
+def make_x_axis(level):
+    """Return the x axis of both charts: bars in the order given, labels named by level."""
+    angle = 0
+    if level == analytics.LEVEL_DAY:
+        angle = -45
+    # sort=None keeps the order from analytics.py instead of sorting the labels.
+    return alt.X(analytics.CHART_LABEL_COLUMN, type="nominal", sort=None,
+                 title=level.capitalize(), axis=alt.Axis(labelAngle=angle, labelLimit=200))
+
+
+def show_rate_chart(summary, level):
+    """Show the attendance rate per bar, with the % on each bar and the axis 0 to 100."""
+    st.subheader(analytics.make_chart_title("Attendance rate", level))
+
+    bars = analytics.build_rate_bars(summary)
+    if bars.empty:
+        st.info("No attendance has been recorded for these filters yet, so there is nothing "
+                "to chart.")
         return
 
-    chart = alt.Chart(chart_data).mark_bar().encode(
-        # sort=None keeps the date order from analytics.py instead of sorting the labels.
-        x=alt.X(analytics.CHART_LABEL_COLUMN, type="nominal", sort=None,
-                axis=alt.Axis(labelAngle=-45)),
+    labels = []
+    for rate in bars[analytics.CHART_VALUE_COLUMN]:
+        labels.append(analytics.format_rate(rate))
+    bars["Label"] = labels
+
+    base = alt.Chart(bars).encode(
+        x=make_x_axis(level),
         y=alt.Y(analytics.CHART_VALUE_COLUMN, type="quantitative",
                 scale=alt.Scale(domain=[0, 100])),
-        color=alt.Color(analytics.CHART_COURSE_COLUMN, type="nominal"),
     )
+    chart = base.mark_bar(color=STATUS_COLORS[0]) + base.mark_text(dy=-8).encode(text="Label")
     st.altair_chart(chart, width="stretch")
-    st.caption(
-        "One bar per session, coloured by course. "
-        "Use the course and date filters to focus on fewer sessions."
-    )
+    st.caption("Excused and not recorded sessions are left out of the rate.")
 
 
-def show_status_chart(filtered_records):
-    """Show a stacked bar per session: Present, Absent and Unknown counts (FR-20)."""
-    st.subheader("Recording status by session")
+def show_status_chart(summary, level):
+    """Show a stacked bar per block, course, week or day: the five status counts (FR-20)."""
+    st.subheader(analytics.make_chart_title("Recording status", level))
 
-    status_data = analytics.build_status_chart_data(filtered_records)
-    if status_data.empty:
-        st.info("No sessions to show for these filters.")
+    if summary.empty:
+        st.info("Nothing to show for these filters.")
         return
 
     chosen_statuses = st.multiselect(
@@ -1777,14 +1931,12 @@ def show_status_chart(filtered_records):
         st.info("No statuses selected. Choose at least one status to show the chart.")
         return
 
-    all_statuses = analytics.make_status_chart_long(status_data)
+    all_statuses = analytics.make_status_chart_long(summary)
     chart_data = analytics.keep_statuses(all_statuses, chosen_statuses)
-    # The colour scale always lists all three statuses, so each keeps its colour
+    # The colour scale always lists all statuses, so each keeps its colour
     # whatever is selected.
     chart = alt.Chart(chart_data).mark_bar().encode(
-        # sort=None keeps the date order from analytics.py, like the rate chart.
-        x=alt.X(analytics.CHART_LABEL_COLUMN, type="nominal", sort=None,
-                axis=alt.Axis(labelAngle=-45)),
+        x=make_x_axis(level),
         y=alt.Y(analytics.CHART_COUNT_COLUMN, type="quantitative", stack="zero"),
         color=alt.Color(
             analytics.CHART_STATUS_COLUMN, type="nominal",
@@ -1805,7 +1957,7 @@ def show_threshold_list(filtered_records):
 
     threshold = st.slider(
         "Attendance rate threshold (%)", min_value=0, max_value=100,
-        value=analytics.DEFAULT_THRESHOLD,
+        value=analytics.DEFAULT_THRESHOLD, key=THRESHOLD_KEY,
     )
 
     student_summary = analytics.build_student_summary(filtered_records)
@@ -1827,7 +1979,7 @@ def show_absence_alerts(filtered_records):
 
     minimum = st.number_input(
         "Alert when current streak is at least", min_value=1,
-        value=analytics.DEFAULT_STREAK_ALERT, step=1, key="streak_minimum",
+        value=analytics.DEFAULT_STREAK_ALERT, step=1, key=STREAK_KEY,
     )
 
     streak_table = analytics.build_streak_table(filtered_records)
@@ -1839,16 +1991,14 @@ def show_absence_alerts(filtered_records):
         st.dataframe(analytics.format_date_columns(alerts), hide_index=True, width="stretch")
 
 
-def show_dashboard_tab(filtered_records, filter_text):
-    """Show the Dashboard tab."""
+def show_dashboard_tab(connection, filtered_records, filter_text, view):
+    """Show the Dashboard tab: cards, drill-down charts, threshold list and alerts."""
     if not has_data_to_show(filtered_records, filter_text):
         return
 
-    show_metrics(filtered_records)
+    show_kpi_cards(filtered_records, database.get_deduction_settings(connection))
     st.divider()
-    show_rate_chart(filtered_records)
-    st.divider()
-    show_status_chart(filtered_records)
+    show_drilldown_charts(filtered_records, view)
     st.divider()
     show_threshold_list(filtered_records)
     st.divider()
@@ -2152,7 +2302,14 @@ def show_demo_controls(connection):
 
 def main():
     """Build the page with its four tabs (FR-01)."""
-    st.set_page_config(page_title="Attendance V2", layout="wide")
+    # With toolbarMode "minimal" the menu is shown only when the app has its own item;
+    # About keeps it, so the theme (System, Light, Dark) can be switched there.
+    st.set_page_config(
+        page_title="Attendance V3",
+        layout="wide",
+        menu_items={"About": "Attendance Management and Analytics, Version 3.1. "
+                             "Programming with Python, AIMS Rwanda."},
+    )
     st.title("Attendance Management and Analytics")
 
     connection = database.get_connection()
@@ -2172,11 +2329,11 @@ def main():
     with import_tab:
         show_import_tab(connection)
 
-    filtered_records, filter_text = show_filters(connection)
+    filtered_records, filter_text, view = show_filters(connection)
     show_demo_controls(connection)
 
     with dashboard_tab:
-        show_dashboard_tab(filtered_records, filter_text)
+        show_dashboard_tab(connection, filtered_records, filter_text, view)
 
     with reports_tab:
         show_reports_tab(connection, filtered_records, filter_text)
