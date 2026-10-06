@@ -1,6 +1,6 @@
 # Traceability: requirement -> code -> test
 
-Each requirement in [ATTENDANCE_V2_SPEC.md](ATTENDANCE_V2_SPEC.md) with the function(s)
+Each requirement in [ATTENDANCE_SPEC.md](ATTENDANCE_SPEC.md) with the function(s)
 that implement it and the test(s) or demo step that check it.
 Test names refer to methods in `tests/test_validation.py`, `tests/test_analytics.py`,
 `tests/test_importer.py`, `tests/test_database.py`, `tests/test_enrollment_dates.py`,

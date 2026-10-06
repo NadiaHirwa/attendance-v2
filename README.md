@@ -5,8 +5,10 @@ saves it permanently in SQLite, imports CSV files safely, and summarizes attenda
 filters, a chart, and CSV downloads.
 
 Built for *Programming with Python*, AIMS Rwanda, 2026-2027.
-The full requirements are in [ATTENDANCE_V2_SPEC.md](ATTENDANCE_V2_SPEC.md), and
+The full requirements are in [ATTENDANCE_SPEC.md](ATTENDANCE_SPEC.md) (Version 3), and
 [TRACEABILITY.md](TRACEABILITY.md) links each requirement to its code and tests.
+Version 3 (blocks, class days, tutorials, deductions) is being built in stages; what it changes
+and why is in the change log, [ATTENDANCE_V3_CHANGES.md](ATTENDANCE_V3_CHANGES.md).
 
 ## Install
 
