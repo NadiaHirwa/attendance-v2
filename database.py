@@ -554,6 +554,21 @@ def import_records(connection, records, source, enrollment_starts):
     return len(records)
 
 
+# ---------- Demo reset ----------
+
+def clear_all_data(connection):
+    """Delete every row from every table, in one transaction (used by "Reset demo data").
+
+    Rows that point to others go first, so the foreign keys stay valid.
+    """
+    with connection:
+        connection.execute("DELETE FROM attendance")
+        connection.execute("DELETE FROM enrollments")
+        connection.execute("DELETE FROM sessions")
+        connection.execute("DELETE FROM students")
+        connection.execute("DELETE FROM courses")
+
+
 # ---------- Rename (FR-22) ----------
 
 def rename_student(connection, student_id, full_name):

@@ -47,6 +47,29 @@ The app opens in the browser with four tabs:
 
 The course and date filters for the Dashboard and Reports are in the sidebar.
 
+If the database has no courses when the app starts, the demo data is created automatically.
+The sidebar also has a **Reset demo data** button (tick the confirmation box first), which
+replaces all data with the demo data.
+
+## Deploy on Streamlit Community Cloud
+
+1. Push this folder to a GitHub repository. `attendance.db` and `.venv/` are in `.gitignore`,
+   so they are not uploaded.
+2. Sign in at [share.streamlit.io](https://share.streamlit.io) with GitHub and click
+   **Create app**.
+3. Choose the repository and branch, and set **Main file path** to `app.py`.
+4. Click **Deploy**. Streamlit installs the packages in `requirements.txt`
+   (`streamlit`, `pandas`) and starts the app.
+
+Things to know about the online version:
+
+- On first start the database is empty, so the app creates the demo data by itself.
+- The online storage is temporary: **data may reset** whenever the app restarts or is
+  redeployed. The sidebar says so, and "Reset demo data" brings back the demo at any time.
+- Anyone with the link can use the app (there is no login), so **do not enter real
+  personal data**.
+- `.streamlit/config.toml` is used online too, so the Deploy button stays hidden.
+
 ## Run the tests
 
 ```

@@ -14,6 +14,7 @@ import streamlit as st
 import analytics
 import database
 import importer
+import seed_demo
 import validation
 
 STATUS_OPTIONS = ["Present", "Late", "Excused", "Absent"]
@@ -1517,6 +1518,28 @@ def show_manage_tab(connection):
         show_edit_and_delete(connection)
 
 
+def show_demo_controls(connection):
+    """Show the demo warning and the 'Reset demo data' button at the bottom of the sidebar."""
+    st.sidebar.divider()
+    st.sidebar.caption(
+        "Demo version: data may reset when the app restarts. Do not enter real personal data."
+    )
+
+    message = st.session_state.pop("demo_message", None)
+    if message is not None:
+        st.sidebar.success(message)
+
+    understood = st.sidebar.checkbox(
+        "I understand this replaces all data with the demo data", key="confirm_reset_demo"
+    )
+    if st.sidebar.button("Reset demo data", disabled=not understood, key="reset_demo"):
+        seed_demo.reset_demo_data(connection)
+        st.session_state["demo_message"] = "Demo data restored."
+        # Untick the box, so the next reset needs a new confirmation.
+        del st.session_state["confirm_reset_demo"]
+        st.rerun()
+
+
 def main():
     """Build the page with its four tabs (FR-01)."""
     st.set_page_config(page_title="Attendance V2", layout="wide")
@@ -1524,6 +1547,8 @@ def main():
 
     connection = database.get_connection()
     database.create_tables(connection)
+    # A fresh online copy starts empty, so give it the demo data to show.
+    seed_demo.seed_if_empty(connection)
 
     dashboard_tab, manage_tab, import_tab, reports_tab = st.tabs(
         ["Dashboard", "Manage Attendance", "Import & Validate", "Reports"]
@@ -1538,6 +1563,7 @@ def main():
         show_import_tab(connection)
 
     filtered_records, filter_text = show_filters(connection)
+    show_demo_controls(connection)
 
     with dashboard_tab:
         show_dashboard_tab(filtered_records, filter_text)

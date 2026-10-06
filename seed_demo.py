@@ -115,6 +115,30 @@ def add_demo_attendance(connection):
             database.record_attendance(connection, student_id, session_id, status, SEED_SOURCE)
 
 
+def create_demo_data(connection):
+    """Add all the demo data to a database with empty tables."""
+    add_demo_data(connection)
+    add_demo_attendance(connection)
+
+
+def seed_if_empty(connection):
+    """Create the demo data if the database has no courses yet. Return True if it did.
+
+    Used when the app starts, so a fresh online copy has data to show.
+    """
+    if database.get_courses(connection):
+        return False
+
+    create_demo_data(connection)
+    return True
+
+
+def reset_demo_data(connection):
+    """Remove every record and create the demo data again, in an open database."""
+    database.clear_all_data(connection)
+    create_demo_data(connection)
+
+
 def print_summary(connection):
     """Print the totals so the person running the script can check them."""
     frame = analytics.build_records_frame(database.get_expected_records(connection))
@@ -130,8 +154,7 @@ def print_summary(connection):
 def main():
     """Rebuild the demo database from scratch."""
     connection = reset_database(database.DB_PATH)
-    add_demo_data(connection)
-    add_demo_attendance(connection)
+    create_demo_data(connection)
     print_summary(connection)
     connection.close()
 
