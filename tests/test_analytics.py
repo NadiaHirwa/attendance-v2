@@ -8,7 +8,7 @@ import unittest
 
 import analytics
 import database
-import seed_demo
+from tests import v2_data
 
 TEST_DB_PATH = ":memory:"
 
@@ -146,13 +146,13 @@ class TestRecordAttendance(DatabaseTestCase):
 
 
 class SeedDataTestCase(unittest.TestCase):
-    """Base class: the seed_demo.py data in an in-memory database. It has no tests itself."""
+    """Base class: the v2_data.py data in an in-memory database. It has no tests itself."""
 
     def setUp(self):
         """Load the demo data and build the records frame."""
-        self.connection = seed_demo.reset_database(TEST_DB_PATH)
-        seed_demo.add_demo_data(self.connection)
-        seed_demo.add_demo_attendance(self.connection)
+        self.connection = v2_data.reset_database(TEST_DB_PATH)
+        v2_data.add_demo_data(self.connection)
+        v2_data.add_demo_attendance(self.connection)
         self.records = self.load_records()
 
     def tearDown(self):
@@ -225,18 +225,28 @@ class TestFilteredCalculations(SeedDataTestCase):
         self.assertTrue(analytics.build_rate_chart_data(filtered).empty)
 
     def test_chart_data_in_date_order(self):
-        """FR-14: one rate per session in date order, with short labels and the course."""
+        """FR-14, BR-23: one rate per session in date order, with DD/MM labels and the course."""
         chart_data = analytics.build_rate_chart_data(self.filter_all())
         labels = list(chart_data[analytics.CHART_LABEL_COLUMN])
         courses = list(chart_data[analytics.CHART_COURSE_COLUMN])
 
-        self.assertEqual(len(labels), 8)
-        self.assertEqual(labels[0], "09-07 PY101-W1")
-        self.assertEqual(labels[1], "09-09 DS102-W1")
+        self.assertEqual(labels, [
+            "07/09 PY101-W1", "09/09 DS102-W1", "14/09 PY101-W2", "16/09 DS102-W2",
+            "21/09 PY101-W3", "23/09 DS102-W3", "28/09 PY101-W4", "30/09 DS102-W4",
+        ])
         self.assertEqual(courses[0], "PY101")
         self.assertEqual(courses[1], "DS102")
-        self.assertEqual(labels, sorted(labels))
         self.assertEqual(chart_data[analytics.CHART_VALUE_COLUMN].iloc[0], 90.0)
+
+    def test_chart_label_of_generated_ids(self):
+        """FR-14, BR-23: generated IDs lose their date: '07/09 PY101', '10/09 PY101-T1'."""
+        self.assertEqual(
+            analytics.make_session_label("2026-09-07", "PY101-2026-09-07", False), "07/09 PY101"
+        )
+        self.assertEqual(
+            analytics.make_session_label("2026-09-10", "PY101-2026-09-10-T1", False),
+            "10/09 PY101-T1",
+        )
 
     def test_chart_same_date_two_courses(self):
         """FR-14: two sessions on the same date in different courses give two rows,
@@ -250,11 +260,11 @@ class TestFilteredCalculations(SeedDataTestCase):
         courses = list(chart_data[analytics.CHART_COURSE_COLUMN])
 
         self.assertEqual(len(labels), 9)
-        self.assertEqual(labels[0], "09-07 DS102-W0")
-        self.assertEqual(labels[1], "09-07 PY101-W1")
+        self.assertEqual(labels[0], "07/09 DS102-W0")
+        self.assertEqual(labels[1], "07/09 PY101-W1")
         self.assertEqual(courses[0], "DS102")
         self.assertEqual(courses[1], "PY101")
-        self.assertEqual(labels[2], "09-09 DS102-W1")
+        self.assertEqual(labels[2], "09/09 DS102-W1")
 
     def test_chart_labels_show_year_across_years(self):
         """FR-14: when sessions are in more than one year, the labels include the year."""
@@ -265,8 +275,8 @@ class TestFilteredCalculations(SeedDataTestCase):
         chart_data = analytics.build_rate_chart_data(self.filter_all())
         labels = list(chart_data[analytics.CHART_LABEL_COLUMN])
 
-        self.assertEqual(labels[0], "2026-09-07 PY101-W1")
-        self.assertEqual(labels[-1], "2027-01-11 PY101-W99")
+        self.assertEqual(labels[0], "07/09/2026 PY101-W1")
+        self.assertEqual(labels[-1], "11/01/2027 PY101-W99")
 
     def test_chart_one_course(self):
         """FR-14: with one course selected, every bar belongs to that course."""
@@ -292,7 +302,7 @@ class TestFilteredCalculations(SeedDataTestCase):
     def test_status_chart_by_hand(self):
         """FR-20: PY101-W2 has 8 Present, 1 Absent (006) and 1 Unknown (003)."""
         status_data = analytics.build_status_chart_data(self.filter_all())
-        session = status_data[status_data[analytics.CHART_LABEL_COLUMN] == "09-14 PY101-W2"]
+        session = status_data[status_data[analytics.CHART_LABEL_COLUMN] == "14/09 PY101-W2"]
 
         self.assertEqual(session["Present"].iloc[0], 8)
         self.assertEqual(session["Absent"].iloc[0], 1)
@@ -316,7 +326,7 @@ class TestFilteredCalculations(SeedDataTestCase):
         status_data = analytics.build_status_chart_data(self.filter_all())
         last = status_data.iloc[-1]
 
-        self.assertEqual(last[analytics.CHART_LABEL_COLUMN], "10-05 PY101-W5")
+        self.assertEqual(last[analytics.CHART_LABEL_COLUMN], "05/10 PY101-W5")
         self.assertEqual((last["Present"], last["Absent"], last["Unknown"]), (0, 0, 10))
 
     def test_status_chart_long_shape(self):
@@ -423,7 +433,7 @@ class TestStreakRule(unittest.TestCase):
 
 
 class TestStreaksOnSeedData(SeedDataTestCase):
-    """FR-21 on the seed_demo.py data."""
+    """FR-21 on the v2_data.py data."""
 
     def find_row(self, streak_table, student_id, course_code):
         """Return the streak row of one student in one course."""
@@ -434,7 +444,7 @@ class TestStreaksOnSeedData(SeedDataTestCase):
         return match.iloc[0]
 
     def test_seed_streaks_by_hand(self):
-        """FR-21, checked by hand from seed_demo.py:
+        """FR-21, checked by hand from v2_data.py:
 
         002 in PY101: W1 Absent, W2 Present, W3 Absent, W4 Absent -> longest 2, current 2,
             last absence 2026-09-28.

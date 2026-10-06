@@ -326,7 +326,9 @@ Decisions made while building, where the sections above did not say what to do.
 ## 12. [V3] Demo data
 
 Replaces the Version 2 demo data (2 courses, 4 sessions each; totals 63 Present / 9 Absent / 4 Unknown,
-87.50%, 94.74%). The new totals are recalculated when `seed_demo.py` is rebuilt.
+87.50%, 94.74%; kept for the tests as `tests/v2_data.py`). **Version 3 totals (Stage 1):**
+505 expected, 477 Present, 10 Late, 4 Excused, 10 Absent, 4 Unknown, attendance 97.99%,
+completeness 99.21%.
 
 - Block `B1-2627`, "Block 1, 2026-27", 07/09/2026 to 25/09/2026.
 - 3 courses: PY101 Programming with Python, DS102 Data Science Basics, MA103 Mathematics for Data Science.

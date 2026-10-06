@@ -10,11 +10,11 @@ import unittest
 import analytics
 import database
 import importer
-import seed_demo
+from tests import v2_data
 import validation
 
 TEST_DB_PATH = ":memory:"
-HEADER = "session_id,course_code,session_date,student_id,full_name,status\n"
+HEADER = "course_code,date,student_id,full_name,status,type\n"
 
 # The courses and enrollments tables as they were before any date columns existed.
 OLD_SCHEMA = """
@@ -75,12 +75,12 @@ class TestPeriodRules(unittest.TestCase):
         period = validation.describe_course_period("2026-09-07", "2026-12-18")
         self.assertEqual(
             validation.SESSION_OUTSIDE_COURSE_ERROR.format("PY101", period),
-            "PY101 runs from 2026-09-07 to 2026-12-18. Choose a date in that period.",
+            "PY101 runs from 07/09/2026 to 18/12/2026. Choose a date in that period.",
         )
         self.assertEqual(validation.describe_course_period("2026-09-07", None),
-                         "from 2026-09-07")
+                         "from 07/09/2026")
         self.assertEqual(validation.describe_course_period(None, "2026-12-18"),
-                         "until 2026-12-18")
+                         "until 18/12/2026")
 
 
 class TestUpgradeOldDatabase(unittest.TestCase):
@@ -110,9 +110,9 @@ class SeedTestCase(unittest.TestCase):
 
     def setUp(self):
         """Load the demo data."""
-        self.connection = seed_demo.reset_database(TEST_DB_PATH)
-        seed_demo.add_demo_data(self.connection)
-        seed_demo.add_demo_attendance(self.connection)
+        self.connection = v2_data.reset_database(TEST_DB_PATH)
+        v2_data.add_demo_data(self.connection)
+        v2_data.add_demo_attendance(self.connection)
 
     def tearDown(self):
         """Close the database after each test."""
@@ -150,24 +150,24 @@ class TestImportPeriod(SeedTestCase):
 
     def test_row_after_course_end_is_rejected(self):
         """FR-25: a PY101 row on 2027-01-05, after the course ends, is rejected with a reason."""
-        accepted, rejected = self.validate(["PY101-W9,PY101,2027-01-05,001,Nadia Hirwa,P"])
+        accepted, rejected = self.validate(["PY101,2027-01-05,001,Nadia Hirwa,P"])
 
         self.assertEqual(len(accepted), 0)
         self.assertEqual(
             rejected[0]["reason"],
-            "Row 2: PY101 runs from 2026-09-07 to 2026-12-18, not on 2027-01-05.",
+            "Row 2: PY101 runs from 07/09/2026 to 18/12/2026, not on 05/01/2027.",
         )
 
     def test_row_before_course_start_is_rejected(self):
         """FR-25: a DS102 row on 2026-09-08, the day before the course starts, is rejected."""
-        accepted, rejected = self.validate(["DS102-W0,DS102,2026-09-08,004,Eric Niyonzima,P"])
+        accepted, rejected = self.validate(["DS102,2026-09-08,004,Eric Niyonzima,P"])
 
         self.assertEqual(len(accepted), 0)
-        self.assertIn("DS102 runs from 2026-09-09 to 2026-12-18", rejected[0]["reason"])
+        self.assertIn("DS102 runs from 09/09/2026 to 18/12/2026", rejected[0]["reason"])
 
     def test_row_on_last_day_is_accepted(self):
-        """FR-25: a PY101 row on 2026-12-18, the course's last day, is accepted."""
-        accepted, rejected = self.validate(["PY101-W15,PY101,2026-12-18,001,Nadia Hirwa,P"])
+        """FR-25: a PY101 tutorial row on 2026-12-18, the course's last day, is accepted."""
+        accepted, rejected = self.validate(["PY101,2026-12-18,001,Nadia Hirwa,P,Tutorial"])
 
         self.assertEqual(len(accepted), 1)
         self.assertEqual(len(rejected), 0)

@@ -1,18 +1,20 @@
-Session_ID,Course_Code,Session_Date,Student_ID,Full_Name,Status,Notes
-DS102-W5,DS102,2026-10-02,004,Eric Niyonzima,P,accepted
-DS102-W5,DS102,2026-10-02,005,Aline Uwase,present,accepted
-DS102-W5,DS102,2026-10-02,12A,Bad Id,P,bad student ID
-DS102-W5,DS102,2026-10-02,006,-Patrick,P,bad name
-DS102-W6,DS102,2026-02-30,007,Diane Mukamana,P,bad date
-DS102-W5,DS102,2026-10-02,008,Kevin Ndayishimiye,maybe,bad status
-BIO200-W1,BIO200,2026-10-02,009,Sandrine Ingabire,P,unknown course
-DS102-W5,DS102,2026-10-02,011,Claudine Mukamana,P,saved student ID with a different name
-DS102-W1,DS102,2026-09-10,012,Samuel Bizimana,P,saved session with a different date
-DS102-W5,DS102,2026-10-02,004,Eric Niyonzima,Present,exact duplicate of row 2
-DS102-W2,DS102,2026-09-16,005,Aline Uwase,P,exact duplicate of a saved record
-DS102-W3,DS102,2026-09-23,011,Claudine Umutoni,P,conflicting status (saved as Absent)
-DS102-W5,DS102,2026-10-02,014,Fabrice Gasana,A,new student: accepted and enrolled
-DS102-W5,DS102,2026-10-02,014,Fabrice Gasana-Mugabo,P,same new ID with a different name in this file
-DS102-W3,DS102,2026-09-23,008,kevin ndayishimiye,a,fills a missing record (name case ignored)
-ds102-w5,ds102,2026-10-02,009,Sandrine Ingabire,P,lowercase codes are normalized
-DS102-W5,PY101,2026-10-02,001,Nadia Hirwa,P,same new session with a different course in this file
+Course_Code,Date,Student_ID,Full_Name,Status,Type,Notes
+PY101,16/09/2026,003,Grace O'Neil,P,,fills a missing record (date as DD/MM/YYYY)
+ds102,2026-09-24,008,Kevin Ndayishimiye,late,tutorial,fills a missing tutorial record (lowercase codes)
+PY101,2026-09-07,12A,Bad Id,P,,bad student ID
+PY101,2026-09-07,006,-Patrick,P,,bad name
+PY101,2026-02-30,007,Diane Mukamana,P,,bad date
+PY101,2026-09-07,008,Kevin Ndayishimiye,maybe,,bad status
+BIO200,2026-09-07,009,Sandrine Ingabire,P,,unknown course
+PY101,2026-09-07,011,Claudine Mukamana,P,,saved student ID with a different name
+PY101,12/09/2026,001,Nadia Hirwa,P,,class row on a Saturday (no class)
+DS102,16/09/2026,001,Nadia Hirwa,P,,class row on the DS102 holiday (no class)
+PY101,16/09/2026,003,Grace O'Neil,Present,,exact duplicate of row 2
+PY101,2026-09-07,001,Nadia Hirwa,P,,exact duplicate of a saved record
+PY101,2026-09-08,002,Jean-Paul Mugisha,P,,conflicting status (saved as Absent)
+MA103,2026-09-21,014,Fabrice Gasana,A,,new student: accepted and enrolled from this date
+MA103,2026-09-21,014,Fabrice Gasana-Mugabo,P,,same new ID with a different name in this file
+MA103,2026-09-19,005,Aline Uwase,P,Tutorial,new Saturday tutorial: created at Confirm
+MA103,2026-09-19,006,Patrick Habimana,P,Tutorial,same new tutorial as the row above
+PY101,2026-10-02,001,Nadia Hirwa,P,,after the course ends
+DS102,2026-09-07,010,Olivier Nkurunziza,P,,before the late joiner's start (14/09/2026)

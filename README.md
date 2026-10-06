@@ -28,9 +28,12 @@ does not need to be activated.
 .venv\Scripts\python seed_demo.py
 ```
 
-This deletes `attendance.db` and recreates it with 2 courses, 12 students, 4 sessions per
-course, and 4 missing records (so Unknown is not zero). Expected totals: 63 Present,
-9 Absent, 4 Unknown, attendance rate 87.50%, completeness 94.74%.
+This deletes `attendance.db` and recreates it with the Version 3 demo data: block B1-2627
+(07/09/2026 to 25/09/2026), 3 courses with a class every weekday (one holiday in DS102) and
+2 tutorials each, and 12 students, including a late joiner and an early leaver.
+Expected totals: 477 Present, 10 Late, 4 Excused, 10 Absent, 4 Unknown (505 expected),
+attendance rate 97.99%, completeness 99.21%. The script also prints the deductions per
+student per course.
 
 ## Run the app
 

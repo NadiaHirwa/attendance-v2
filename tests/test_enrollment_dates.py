@@ -9,11 +9,11 @@ import unittest
 import analytics
 import database
 import importer
-import seed_demo
+from tests import v2_data
 import validation
 
 TEST_DB_PATH = ":memory:"
-HEADER = "session_id,course_code,session_date,student_id,full_name,status\n"
+HEADER = "course_code,date,student_id,full_name,status\n"
 
 # The enrollments table as it was before this version, without the date columns.
 OLD_SCHEMA = """
@@ -109,9 +109,9 @@ class SeedTestCase(unittest.TestCase):
 
     def setUp(self):
         """Load the demo data."""
-        self.connection = seed_demo.reset_database(TEST_DB_PATH)
-        seed_demo.add_demo_data(self.connection)
-        seed_demo.add_demo_attendance(self.connection)
+        self.connection = v2_data.reset_database(TEST_DB_PATH)
+        v2_data.add_demo_data(self.connection)
+        v2_data.add_demo_attendance(self.connection)
 
     def tearDown(self):
         """Close the database after each test."""
@@ -267,8 +267,8 @@ class TestImportWithDates(SeedTestCase):
     def test_new_student_starts_at_earliest_row(self):
         """FR-24: a new student imported for W4 and W3 is enrolled from W3 (the earliest)."""
         self.import_lines([
-            "PY101-W4,PY101,2026-09-28,013,Alice Uwimana,A",
-            "PY101-W3,PY101,2026-09-21,013,Alice Uwimana,P",
+            "PY101,2026-09-28,013,Alice Uwimana,A",
+            "PY101,2026-09-21,013,Alice Uwimana,P",
         ])
 
         enrollment = database.get_enrollment(self.connection, "013", "PY101")
@@ -279,7 +279,7 @@ class TestImportWithDates(SeedTestCase):
 
     def test_existing_student_new_course_starts_at_row(self):
         """FR-24: 001 imported into DS102 at W2 is enrolled in DS102 from 2026-09-16."""
-        self.import_lines(["DS102-W2,DS102,2026-09-16,001,Nadia Hirwa,P"])
+        self.import_lines(["DS102,2026-09-16,001,Nadia Hirwa,P"])
 
         enrollment = database.get_enrollment(self.connection, "001", "DS102")
         self.assertEqual(enrollment["start_date"], "2026-09-16")
@@ -290,24 +290,24 @@ class TestImportWithDates(SeedTestCase):
         """FR-24: 013 is enrolled from 2026-09-14, so a W1 row (2026-09-07) is rejected."""
         self.add_student_013(start_date="2026-09-14")
 
-        accepted, rejected = self.import_lines(["PY101-W1,PY101,2026-09-07,013,Alice Uwimana,P"])
+        accepted, rejected = self.import_lines(["PY101,2026-09-07,013,Alice Uwimana,P"])
 
         self.assertEqual(len(accepted), 0)
         self.assertEqual(
             rejected[0]["reason"],
-            "Row 2: Student 013 is enrolled in PY101 from 2026-09-14, not on 2026-09-07.",
+            "Row 2: Student 013 is enrolled in PY101 from 14/09/2026, not on 07/09/2026.",
         )
 
     def test_row_after_end_is_rejected(self):
         """FR-24: 013 was enrolled until 2026-09-14, so a W3 row (2026-09-21) is rejected."""
         self.add_student_013(end_date="2026-09-14")
 
-        accepted, rejected = self.import_lines(["PY101-W3,PY101,2026-09-21,013,Alice Uwimana,P"])
+        accepted, rejected = self.import_lines(["PY101,2026-09-21,013,Alice Uwimana,P"])
 
         self.assertEqual(len(accepted), 0)
         self.assertEqual(
             rejected[0]["reason"],
-            "Row 2: Student 013 was enrolled in PY101 until 2026-09-14, not on 2026-09-21.",
+            "Row 2: Student 013 was enrolled in PY101 until 14/09/2026, not on 21/09/2026.",
         )
 
 

@@ -51,11 +51,73 @@ class TestCourseCode(unittest.TestCase):
 class TestSessionDate(unittest.TestCase):
 
     def test_t04_session_date(self):
-        """T04 (BR-06): 2026-09-15 is valid; 2026-02-30, 15/09/2026 and empty are invalid."""
+        """T04 (BR-06, BR-23): 2026-09-15 and 15/09/2026 are valid and stored as 2026-09-15;
+        2026-02-30, 31/02/2026, 2026-9-5 and empty are invalid."""
         self.assertEqual(validation.parse_date("2026-09-15"), "2026-09-15")
+        self.assertEqual(validation.parse_date("15/09/2026"), "2026-09-15")
 
-        for date_text in ["2026-02-30", "15/09/2026", ""]:
+        for date_text in ["2026-02-30", "31/02/2026", "2026-9-5", ""]:
             self.assertIsNone(validation.parse_date(date_text), date_text)
+
+    def test_day_comes_first(self):
+        """BR-23: 07/09/2026 always means 7 September, not 9 July."""
+        self.assertEqual(validation.parse_date("07/09/2026"), "2026-09-07")
+
+    def test_format_date_for_display(self):
+        """BR-23: stored dates are shown as DD/MM/YYYY; other text is left unchanged."""
+        self.assertEqual(validation.format_date("2026-09-07"), "07/09/2026")
+        self.assertEqual(validation.format_date("now"), "now")
+        self.assertEqual(validation.format_date("2026-02-30"), "2026-02-30")
+        self.assertIsNone(validation.format_date(None))
+
+
+class TestBlocksAndClassDays(unittest.TestCase):
+
+    def test_block_id(self):
+        """BR-18: b1-2627 becomes B1-2627; B, a 11-character ID and B1 2627 are invalid."""
+        self.assertEqual(validation.normalize_block_id(" b1-2627 "), "B1-2627")
+
+        for block_id in ["B", "B1-2627-ABC", "B1 2627", "B1_2627"]:
+            self.assertIsNone(validation.normalize_block_id(block_id), block_id)
+
+    def test_block_starts_on_monday(self):
+        """BR-18: 2026-09-07 is a Monday; 2026-09-08 is not."""
+        self.assertTrue(validation.is_monday("2026-09-07"))
+        self.assertFalse(validation.is_monday("2026-09-08"))
+
+    def test_block_end_is_friday_of_week_3(self):
+        """BR-18: a block starting Monday 07/09/2026 ends Friday 25/09/2026 (start + 18 days)."""
+        end_date = validation.calculate_block_end("2026-09-07")
+
+        self.assertEqual(end_date, "2026-09-25")
+        self.assertEqual(validation.weekday_name(end_date), "Friday")
+
+    def test_class_days_skip_weekends(self):
+        """BR-20: a 3-week block has 15 class days, Monday to Friday, never a weekend."""
+        class_days = validation.list_class_days("2026-09-07", "2026-09-25")
+
+        self.assertEqual(len(class_days), 15)
+        self.assertEqual(class_days[0], "2026-09-07")
+        self.assertEqual(class_days[4], "2026-09-11")
+        self.assertEqual(class_days[5], "2026-09-14")
+        self.assertNotIn("2026-09-12", class_days)
+        self.assertNotIn("2026-09-13", class_days)
+
+    def test_generated_session_ids(self):
+        """BR-20, BR-21: class day and tutorial IDs are built from the course and date."""
+        self.assertEqual(
+            validation.make_class_session_id("PY101", "2026-09-07"), "PY101-2026-09-07"
+        )
+        self.assertEqual(
+            validation.make_tutorial_session_id("PY101", "2026-09-10", 2), "PY101-2026-09-10-T2"
+        )
+
+    def test_session_type(self):
+        """IR-12, IR-13: an empty type means Class; Tutorial in any case; other values fail."""
+        self.assertEqual(validation.normalize_session_type(""), "Class")
+        self.assertEqual(validation.normalize_session_type(" CLASS "), "Class")
+        self.assertEqual(validation.normalize_session_type("tutorial"), "Tutorial")
+        self.assertIsNone(validation.normalize_session_type("Lab"))
 
 
 class TestStatus(unittest.TestCase):

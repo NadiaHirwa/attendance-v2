@@ -1,18 +1,27 @@
-"""Validation rules for the attendance system (BR-01 to BR-07).
+"""Validation rules for the attendance system (BR-01 to BR-07, BR-18 to BR-23).
 
 Every function here is pure: it takes text and returns a result.
 There is no database and no Streamlit code, so all rules can be tested.
 """
 
 import unicodedata
-from datetime import datetime
+from datetime import datetime, timedelta
 
 MAX_NAME_LENGTH = 50
 MIN_COURSE_CODE_LENGTH = 2
 MAX_COURSE_CODE_LENGTH = 10
 MAX_COURSE_NAME_LENGTH = 80
 MAX_SESSION_ID_LENGTH = 20
+MIN_BLOCK_ID_LENGTH = 2
+MAX_BLOCK_ID_LENGTH = 10
+# Dates are stored as YYYY-MM-DD and shown as DD/MM/YYYY (BR-23).
 DATE_FORMAT = "%Y-%m-%d"
+DISPLAY_DATE_FORMAT = "%d/%m/%Y"
+# A block lasts 3 weeks, Monday of week 1 to Friday of week 3 (BR-18).
+BLOCK_WEEKS = 3
+WEEKDAY_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+CLASS = "Class"
+TUTORIAL = "Tutorial"
 
 # Error messages say what was wrong and what is expected (BR-13).
 STUDENT_ID_ERROR = "Invalid student ID. Expected exactly 3 digits from 001 to 999."
@@ -30,7 +39,26 @@ SESSION_ID_ERROR = (
     "Invalid session ID. Expected 1 to 20 letters, digits or hyphens "
     "(for example PY101-W1)."
 )
-DATE_ERROR = "Invalid date. Expected a real date in YYYY-MM-DD format (for example 2026-09-15)."
+DATE_ERROR = (
+    "Invalid date. Expected a real date as DD/MM/YYYY or YYYY-MM-DD "
+    "(for example 15/09/2026)."
+)
+TYPE_ERROR = "Invalid type. Expected Class or Tutorial (or leave it empty for Class)."
+BLOCK_ID_ERROR = (
+    "Invalid block ID. Expected 2 to 10 letters, digits or hyphens (for example B1-2627)."
+)
+BLOCK_NAME_ERROR = "Invalid block name. Expected 1 to 80 characters."
+BLOCK_START_ERROR = "Invalid block start. A block must start on a Monday; {} is a {}."
+BLOCK_EXISTS_ERROR = "Block {} already exists. Enter a different block ID."
+COURSE_OUTSIDE_BLOCK_ERROR = (
+    "Invalid course dates. {} is in block {}, which runs {}. "
+    "The course dates must stay inside the block."
+)
+RECORDS_ON_REMOVED_DAYS_ERROR = (
+    "Cannot change the dates: {} saved attendance record(s) of {} are on days outside "
+    "the new period and would be lost. Delete those records first or choose a wider period."
+)
+NO_CLASS_ERROR = "{} has no class on {} {}."
 STATUS_ERROR = (
     "Invalid status. Expected P, L, E, A, Present, Late, Excused or Absent."
 )
@@ -93,14 +121,6 @@ NAME_CONFLICT_SAVED_ERROR = (
 NAME_CONFLICT_FILE_ERROR = (
     'Student ID {} appears earlier in this file (row {}) as "{}", not "{}". '
     "Use one name per student ID."
-)
-SESSION_CONFLICT_SAVED_ERROR = (
-    "Session {} is already saved for {} on {}, not {} on {}. "
-    "Use the saved course and date or a different session ID."
-)
-SESSION_CONFLICT_FILE_ERROR = (
-    "Session {} appears earlier in this file (row {}) for {} on {}, not {} on {}. "
-    "Use one course and date per session ID."
 )
 STATUS_CONFLICT_SAVED_ERROR = (
     "Student {} is already saved as {} for session {}, not {}. "
@@ -222,19 +242,125 @@ def normalize_session_id(session_id):
 
 
 def parse_date(date_text):
-    """Return the date as 'YYYY-MM-DD' text, or None if it is not a real date (BR-06)."""
+    """Return the date as 'YYYY-MM-DD' text, or None if it is not a real date (BR-06, BR-23).
+
+    Accepts 'YYYY-MM-DD' and 'DD/MM/YYYY'. '07/09/2026' always means 7 September.
+    """
     date_text = date_text.strip()
 
-    # strptime alone would accept '2026-9-15', so check the exact shape first.
-    if len(date_text) != 10 or date_text[4] != "-" or date_text[7] != "-":
+    # strptime alone would accept '2026-9-15' or '7/9/2026', so check the exact shape first.
+    if len(date_text) != 10:
+        return None
+
+    if date_text[4] == "-" and date_text[7] == "-":
+        pattern = DATE_FORMAT
+    elif date_text[2] == "/" and date_text[5] == "/":
+        pattern = DISPLAY_DATE_FORMAT
+    else:
         return None
 
     try:
-        parsed = datetime.strptime(date_text, DATE_FORMAT)
+        parsed = datetime.strptime(date_text, pattern)
     except ValueError:
         return None
 
     return parsed.strftime(DATE_FORMAT)
+
+
+def format_date(date_text):
+    """Return a stored 'YYYY-MM-DD' date as 'DD/MM/YYYY' for screens and downloads (BR-23).
+
+    Anything that is not a real stored date (None, 'start', 'now', or a bad value from
+    a file such as '2026-02-30') is returned unchanged.
+    """
+    if date_text is None or not isinstance(date_text, str):
+        return date_text
+    if len(date_text) != 10 or date_text[4] != "-" or date_text[7] != "-":
+        return date_text
+
+    try:
+        parsed = datetime.strptime(date_text, DATE_FORMAT)
+    except ValueError:
+        return date_text
+    return parsed.strftime(DISPLAY_DATE_FORMAT)
+
+
+def weekday_name(date_text):
+    """Return the weekday of a 'YYYY-MM-DD' date in English, like 'Monday'."""
+    parsed = datetime.strptime(date_text, DATE_FORMAT)
+    return WEEKDAY_NAMES[parsed.weekday()]
+
+
+# ---------- Blocks, class days and tutorials (BR-18 to BR-21) ----------
+
+def normalize_block_id(block_id):
+    """Return the block ID in uppercase, or None if it is invalid (BR-18)."""
+    block_id = block_id.strip()
+    length = len(block_id)
+
+    if length < MIN_BLOCK_ID_LENGTH or length > MAX_BLOCK_ID_LENGTH:
+        return None
+
+    for character in block_id:
+        if not character.isascii():
+            return None
+        if not character.isalnum() and character != "-":
+            return None
+
+    return block_id.upper()
+
+
+def is_monday(date_text):
+    """Return True if a 'YYYY-MM-DD' date is a Monday (BR-18)."""
+    return weekday_name(date_text) == "Monday"
+
+
+def calculate_block_end(start_date):
+    """Return the Friday of week 3 for a block starting on a Monday (BR-18).
+
+    Monday + 18 days = Friday of week 3 (two full weeks of 7 days, then 4 more days).
+    """
+    start = datetime.strptime(start_date, DATE_FORMAT)
+    end = start + timedelta(days=(BLOCK_WEEKS - 1) * 7 + 4)
+    return end.strftime(DATE_FORMAT)
+
+
+def list_class_days(start_date, end_date):
+    """Return every Monday to Friday from start_date to end_date, both included (BR-20)."""
+    day = datetime.strptime(start_date, DATE_FORMAT)
+    last_day = datetime.strptime(end_date, DATE_FORMAT)
+    class_days = []
+
+    while day <= last_day:
+        # weekday() is 0 for Monday ... 4 for Friday, 5 and 6 for the weekend.
+        if day.weekday() < 5:
+            class_days.append(day.strftime(DATE_FORMAT))
+        day = day + timedelta(days=1)
+
+    return class_days
+
+
+def make_class_session_id(course_code, session_date):
+    """Return the generated ID of a class day, like 'PY101-2026-09-07' (BR-20)."""
+    return f"{course_code}-{session_date}"
+
+
+def make_tutorial_session_id(course_code, session_date, number):
+    """Return the generated ID of a tutorial, like 'PY101-2026-09-10-T1' (BR-21)."""
+    return f"{course_code}-{session_date}-T{number}"
+
+
+def normalize_session_type(session_type):
+    """Return 'Class' or 'Tutorial'; an empty value means 'Class'. None if invalid."""
+    session_type = session_type.strip().lower()
+
+    if session_type in ("", "class"):
+        return CLASS
+
+    if session_type == "tutorial":
+        return TUTORIAL
+
+    return None
 
 
 def is_date_in_period(date_text, start_date, end_date):
@@ -304,13 +430,13 @@ def simplify_enrollment_dates(start_date, end_date, course_start, course_end):
 
 
 def describe_course_period(start_date, end_date):
-    """Return text like 'from 2026-09-07 to 2026-12-18' for a course's dates (BR-16)."""
+    """Return text like 'from 07/09/2026 to 25/09/2026' for a period (BR-16, BR-23)."""
     if start_date is not None and end_date is not None:
-        return f"from {start_date} to {end_date}"
+        return f"from {format_date(start_date)} to {format_date(end_date)}"
     if start_date is not None:
-        return f"from {start_date}"
+        return f"from {format_date(start_date)}"
     if end_date is not None:
-        return f"until {end_date}"
+        return f"until {format_date(end_date)}"
     return "with no set dates"
 
 

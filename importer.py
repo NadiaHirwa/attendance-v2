@@ -1,10 +1,10 @@
-"""CSV import for the attendance system (Section 5, IR-01 to IR-11).
+"""CSV import for the attendance system (Section 5, IR-01 to IR-14).
 
 The workflow has three steps that the app calls in order:
 1. read_csv() turns the uploaded bytes into rows (IR-01).
 2. validate_rows() sorts rows into accepted, duplicates and rejected.
-   It also checks each row against its course's dates (BR-16) and an existing
-   enrollment's dates (BR-15).
+   It finds the class day or tutorial of each row (IR-12, IR-13), and checks the
+   course's dates (BR-16) and an existing enrollment's dates (BR-15).
    It reads the database but never writes to it (IR-09).
 3. apply_import() saves the accepted rows in one transaction, only after Confirm.
 """
@@ -18,13 +18,15 @@ import database
 import validation
 
 REQUIRED_COLUMNS = [
-    "session_id",
     "course_code",
-    "session_date",
+    "date",
     "student_id",
     "full_name",
     "status",
 ]
+# Optional column: 'Class' (the default when missing or empty) or 'Tutorial'.
+TYPE_COLUMN = "type"
+FILE_COLUMNS = REQUIRED_COLUMNS + [TYPE_COLUMN]
 ROW_COLUMN = "row"
 REASON_COLUMN = "reason"
 # Row 1 of the file is the header, so the first data row is row 2, like in a spreadsheet.
@@ -47,10 +49,11 @@ def find_missing_columns(header):
 
 
 def read_csv(file_bytes):
-    """Return (rows, error). Each row has a 'row' number and the six required columns.
+    """Return (rows, error). Each row has a 'row' number, the five required columns and type.
 
     The error is None when the file can be used. Otherwise the whole file is
-    rejected and rows is empty (IR-01). Extra columns are ignored.
+    rejected and rows is empty (IR-01). Other columns (such as an old session_id)
+    are ignored. A file without a type column gets an empty type, which means Class.
     """
     try:
         # "utf-8-sig" also accepts a BOM, which Excel adds to "CSV UTF-8" files.
@@ -76,7 +79,7 @@ def read_csv(file_bytes):
         )
         return [], message
 
-    # Remember which position each required column has in this file.
+    # Remember which position each column has in this file.
     positions = {}
     for index, name in enumerate(header):
         positions[name.strip().lower()] = index
@@ -89,12 +92,10 @@ def read_csv(file_bytes):
             continue
 
         row = {ROW_COLUMN: row_number}
-        for column in REQUIRED_COLUMNS:
-            index = positions[column]
-            if index < len(line):
-                row[column] = line[index]
-            else:
-                row[column] = ""
+        for column in FILE_COLUMNS:
+            row[column] = ""
+            if column in positions and positions[column] < len(line):
+                row[column] = line[positions[column]]
         rows.append(row)
         row_number += 1
 
@@ -122,7 +123,10 @@ def make_format_reason(row_number, message, value):
 
 
 def clean_row(raw_row):
-    """Check BR-01 to BR-07 for one row. Return (cleaned row, None) or (None, reason)."""
+    """Check BR-01 to BR-07 and BR-23 for one row. Return (cleaned row, None) or (None, reason).
+
+    The cleaned date is stored as 'YYYY-MM-DD'. The session_id is found later.
+    """
     row_number = raw_row[ROW_COLUMN]
 
     raw_student_id = raw_row["student_id"]
@@ -141,15 +145,15 @@ def clean_row(raw_row):
         message = validation.COURSE_CODE_ERROR
         return None, make_format_reason(row_number, message, raw_row["course_code"])
 
-    session_id = validation.normalize_session_id(raw_row["session_id"])
-    if session_id is None:
-        message = validation.SESSION_ID_ERROR
-        return None, make_format_reason(row_number, message, raw_row["session_id"])
-
-    session_date = validation.parse_date(raw_row["session_date"])
+    session_date = validation.parse_date(raw_row["date"])
     if session_date is None:
         message = validation.DATE_ERROR
-        return None, make_format_reason(row_number, message, raw_row["session_date"])
+        return None, make_format_reason(row_number, message, raw_row["date"])
+
+    session_type = validation.normalize_session_type(raw_row[TYPE_COLUMN])
+    if session_type is None:
+        message = validation.TYPE_ERROR
+        return None, make_format_reason(row_number, message, raw_row[TYPE_COLUMN])
 
     status = validation.normalize_status(raw_row["status"])
     if status is None:
@@ -158,12 +162,13 @@ def clean_row(raw_row):
 
     cleaned = {
         ROW_COLUMN: row_number,
-        "session_id": session_id,
         "course_code": course_code,
-        "session_date": session_date,
+        "date": session_date,
         "student_id": student_id,
         "full_name": full_name,
         "status": status,
+        TYPE_COLUMN: session_type,
+        "session_id": None,
     }
     return cleaned, None
 
@@ -193,53 +198,58 @@ def check_student(connection, row, file_students):
     return None
 
 
-def check_session(connection, row, file_sessions):
-    """Return a conflict reason if the session has a different course or date (IR-05).
-
-    Returns None when there is no conflict.
-    """
-    session_id = row["session_id"]
-    course_code = row["course_code"]
-    session_date = row["session_date"]
-
-    saved_session = database.get_session(connection, session_id)
-    if saved_session is not None:
-        same_course = saved_session["course_code"] == course_code
-        same_date = saved_session["session_date"] == session_date
-        if not same_course or not same_date:
-            message = validation.SESSION_CONFLICT_SAVED_ERROR.format(
-                session_id, saved_session["course_code"], saved_session["session_date"],
-                course_code, session_date,
-            )
-            return make_reason(row[ROW_COLUMN], message)
-        return None
-
-    if session_id in file_sessions:
-        first_course, first_date, first_row = file_sessions[session_id]
-        if first_course != course_code or first_date != session_date:
-            message = validation.SESSION_CONFLICT_FILE_ERROR.format(
-                session_id, first_row, first_course, first_date, course_code, session_date
-            )
-            return make_reason(row[ROW_COLUMN], message)
-
-    return None
-
-
 def check_course_period(connection, row):
-    """Return a reason if the row's session date is outside its course's dates (BR-16)."""
+    """Return a reason if the row's date is outside its course's dates (BR-16)."""
     course = database.get_course(connection, row["course_code"])
     start_date = course["start_date"]
     end_date = course["end_date"]
 
-    if validation.is_date_in_period(row["session_date"], start_date, end_date):
+    if validation.is_date_in_period(row["date"], start_date, end_date):
         return None
 
     message = validation.ROW_OUTSIDE_COURSE_ERROR.format(
         row["course_code"],
         validation.describe_course_period(start_date, end_date),
-        row["session_date"],
+        validation.format_date(row["date"]),
     )
     return make_reason(row[ROW_COLUMN], message)
+
+
+def find_session(connection, row, file_tutorials):
+    """Set row['session_id'] to the class day or tutorial of the row. Return a reason or None.
+
+    Class (IR-12): the course must have a class on that date; a weekend or a removed
+    day has none. Tutorial (IR-13): the first tutorial on that date is used; if there
+    is none, a new tutorial ID is planned, and later rows for the same date share it.
+    """
+    course_code = row["course_code"]
+    session_date = row["date"]
+
+    if row[TYPE_COLUMN] == validation.CLASS:
+        class_session = database.get_class_session(connection, course_code, session_date)
+        if class_session is None:
+            message = validation.NO_CLASS_ERROR.format(
+                course_code,
+                validation.weekday_name(session_date),
+                validation.format_date(session_date),
+            )
+            return make_reason(row[ROW_COLUMN], message)
+        row["session_id"] = class_session["session_id"]
+        return None
+
+    tutorials = database.get_tutorials_on_date(connection, course_code, session_date)
+    if tutorials:
+        row["session_id"] = tutorials[0]["session_id"]
+        return None
+
+    key = (course_code, session_date)
+    if key not in file_tutorials:
+        planned_ids = list(file_tutorials.values())
+        file_tutorials[key] = database.next_tutorial_id(
+            connection, course_code, session_date, planned_ids
+        )
+    row["session_id"] = file_tutorials[key]
+    return None
 
 
 def check_enrollment_dates(connection, row):
@@ -250,7 +260,7 @@ def check_enrollment_dates(connection, row):
     """
     student_id = row["student_id"]
     course_code = row["course_code"]
-    session_date = row["session_date"]
+    session_date = row["date"]
 
     enrollment = database.get_enrollment(connection, student_id, course_code)
     if enrollment is None:
@@ -263,11 +273,13 @@ def check_enrollment_dates(connection, row):
 
     if start_date is not None and session_date < start_date:
         message = validation.ENROLLED_FROM_ERROR.format(
-            student_id, course_code, start_date, session_date
+            student_id, course_code,
+            validation.format_date(start_date), validation.format_date(session_date),
         )
     else:
         message = validation.ENROLLED_UNTIL_ERROR.format(
-            student_id, course_code, end_date, session_date
+            student_id, course_code,
+            validation.format_date(end_date), validation.format_date(session_date),
         )
     return make_reason(row[ROW_COLUMN], message)
 
@@ -314,17 +326,17 @@ def reject(raw_row, reason):
 def validate_rows(connection, rows):
     """Sort rows into (accepted, duplicates, rejected) without writing to the database.
 
-    Earlier rows of the file count too: if a new student or session appears twice
-    with different details, the first row is kept and the later one is rejected.
+    Earlier rows of the file count too: if a new student appears twice with
+    different names, the first row is kept and the later one is rejected.
     """
     accepted = []
     duplicates = []
     rejected = []
 
     # What the accepted rows of this file say so far.
-    file_students = {}   # student_id -> (full_name, row number)
-    file_sessions = {}   # session_id -> (course_code, session_date, row number)
-    file_statuses = {}   # (student_id, session_id) -> (status, row number)
+    file_students = {}    # student_id -> (full_name, row number)
+    file_tutorials = {}   # (course_code, date) -> planned new tutorial ID
+    file_statuses = {}    # (student_id, session_id) -> (status, row number)
 
     for raw_row in rows:
         row, reason = clean_row(raw_row)
@@ -339,9 +351,9 @@ def validate_rows(connection, rows):
 
         reason = check_course_period(connection, row)
         if reason is None:
-            reason = check_student(connection, row, file_students)
+            reason = find_session(connection, row, file_tutorials)
         if reason is None:
-            reason = check_session(connection, row, file_sessions)
+            reason = check_student(connection, row, file_students)
         if reason is None:
             reason = check_enrollment_dates(connection, row)
         if reason is not None:
@@ -360,9 +372,6 @@ def validate_rows(connection, rows):
         row_number = row[ROW_COLUMN]
         if row["student_id"] not in file_students:
             file_students[row["student_id"]] = (row["full_name"], row_number)
-        if row["session_id"] not in file_sessions:
-            session_details = (row["course_code"], row["session_date"], row_number)
-            file_sessions[row["session_id"]] = session_details
         file_statuses[(row["student_id"], row["session_id"])] = (row["status"], row_number)
 
     return accepted, duplicates, rejected
@@ -371,7 +380,7 @@ def validate_rows(connection, rows):
 # ---------- Step 3: save after Confirm ----------
 
 def find_enrollment_starts(accepted):
-    """Return the earliest session date per (student_id, course_code) in the accepted rows.
+    """Return the earliest date per (student_id, course_code) in the accepted rows.
 
     A new enrollment created by the import starts on that date (BR-15), so the
     student is not expected at the course's earlier sessions.
@@ -379,8 +388,8 @@ def find_enrollment_starts(accepted):
     starts = {}
     for row in accepted:
         key = (row["student_id"], row["course_code"])
-        if key not in starts or row["session_date"] < starts[key]:
-            starts[key] = row["session_date"]
+        if key not in starts or row["date"] < starts[key]:
+            starts[key] = row["date"]
     return starts
 
 
@@ -394,12 +403,12 @@ def apply_import(connection, accepted, filename):
 
 def make_table(rows, with_reason):
     """Return the rows as a DataFrame with the row number first and an optional reason."""
-    columns = [ROW_COLUMN] + REQUIRED_COLUMNS
+    columns = [ROW_COLUMN] + FILE_COLUMNS
     if with_reason:
         columns.append(REASON_COLUMN)
     return pd.DataFrame(rows, columns=columns)
 
 
 def make_template_csv():
-    """Return an empty CSV template with only the required header (FR-11)."""
-    return ",".join(REQUIRED_COLUMNS) + "\n"
+    """Return an empty CSV template with the required columns and the optional type (FR-11)."""
+    return ",".join(FILE_COLUMNS) + "\n"

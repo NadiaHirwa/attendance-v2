@@ -1,14 +1,14 @@
 """Tests for rename and delete in database.py (FR-22, FR-23).
 
-Every test loads the seed_demo.py data into a temporary in-memory database,
-never attendance.db. The expected counts were worked out by hand from seed_demo.py.
+Every test loads the v2_data.py data into a temporary in-memory database,
+never attendance.db. The expected counts were worked out by hand from v2_data.py.
 """
 
 import unittest
 
 import analytics
 import database
-import seed_demo
+from tests import v2_data
 import validation
 
 TEST_DB_PATH = ":memory:"
@@ -31,9 +31,9 @@ class SeedDatabaseTestCase(unittest.TestCase):
 
     def setUp(self):
         """Load the demo data."""
-        self.connection = seed_demo.reset_database(TEST_DB_PATH)
-        seed_demo.add_demo_data(self.connection)
-        seed_demo.add_demo_attendance(self.connection)
+        self.connection = v2_data.reset_database(TEST_DB_PATH)
+        v2_data.add_demo_data(self.connection)
+        v2_data.add_demo_attendance(self.connection)
 
     def tearDown(self):
         """Close the database after each test."""

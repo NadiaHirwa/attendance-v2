@@ -6,6 +6,8 @@ never use Streamlit, so every calculation can be tested.
 
 import pandas as pd
 
+import validation
+
 PRESENT = "Present"
 LATE = "Late"
 EXCUSED = "Excused"
@@ -23,6 +25,13 @@ CHART_STATUS_COLUMN = "Status"
 CHART_COUNT_COLUMN = "Students"
 CHART_ORDER_COLUMN = "Stack order"
 DEFAULT_STREAK_ALERT = 2
+# Marks deducted per Late and per Absent (BR-22). Stage 3 makes them editable settings.
+DEFAULT_LATE_DEDUCTION = 1
+DEFAULT_ABSENT_DEDUCTION = 2
+DEDUCTED_COLUMN = "Deducted marks"
+# Columns that hold dates in the tables shown on screen and downloaded (BR-23).
+DATE_COLUMNS = ["Date", "Enrolled from", "Enrolled until", "Last absence", "date",
+                "Start date", "End date"]
 CURRENT_STREAK_COLUMN = "Current absence streak"
 LONGEST_STREAK_COLUMN = "Longest absence streak"
 LAST_ABSENCE_COLUMN = "Last absence"
@@ -227,11 +236,18 @@ def calculate_dashboard_metrics(frame):
 
 
 def make_session_label(session_date, session_id, include_year):
-    """Return a short chart label like '09-07 PY101-W1', or '2026-09-07 PY101-W1' with the year."""
-    if include_year:
-        return f"{session_date} {session_id}"
-    # session_date is 'YYYY-MM-DD', so [5:] keeps only 'MM-DD'.
-    return f"{session_date[5:]} {session_id}"
+    """Return a short chart label like '07/09 PY101' or '10/09 PY101-T1' (BR-23).
+
+    A generated session ID already contains the date ('PY101-2026-09-07'), so the
+    date is taken out of it to keep the label short. With include_year, the date is
+    shown in full: '07/09/2026 PY101'.
+    """
+    short_id = session_id.replace("-" + session_date, "")
+    display_date = validation.format_date(session_date)
+    if not include_year:
+        # 'DD/MM/YYYY'[:5] keeps only 'DD/MM'.
+        display_date = display_date[:5]
+    return f"{display_date} {short_id}"
 
 
 def labels_need_year(session_summary):
@@ -514,3 +530,54 @@ def build_student_history(frame):
         "session_date": "Date",
         "status": "Status",
     })
+
+
+# ---------- Dates on screen (BR-23) ----------
+
+def format_date_columns(table):
+    """Return a copy of a table with every date column shown as DD/MM/YYYY (BR-23).
+
+    The screen and the CSV download both use the returned table, so they match.
+    Values that are not dates ('start', 'now', empty) are left as they are.
+    """
+    formatted = table.copy()
+    for column in DATE_COLUMNS:
+        if column not in formatted.columns:
+            continue
+        new_values = []
+        for value in formatted[column]:
+            new_values.append(validation.format_date(value))
+        formatted[column] = new_values
+    return formatted
+
+
+# ---------- Mark deductions (BR-22) ----------
+
+def calculate_deduction(late, absent, late_deduction=DEFAULT_LATE_DEDUCTION,
+                        absent_deduction=DEFAULT_ABSENT_DEDUCTION):
+    """Return the marks deducted: Late x late_deduction + Absent x absent_deduction (BR-22).
+
+    Present and Excused deduct nothing. Unknown deducts nothing (it is flagged instead).
+    There is no maximum.
+    """
+    return late * late_deduction + absent * absent_deduction
+
+
+def build_deductions_table(frame):
+    """Return one row per student per course with Late, Absent, Unknown and deducted marks."""
+    columns = ["student_id", "full_name", "course_code", LATE, ABSENT, UNKNOWN, DEDUCTED_COLUMN]
+    rows = []
+
+    for (student_id, course_code), group in frame.groupby(["student_id", "course_code"]):
+        present, late, excused, absent, unknown = count_statuses(group)
+        rows.append({
+            "student_id": student_id,
+            "full_name": group["full_name"].iloc[0],
+            "course_code": course_code,
+            LATE: late,
+            ABSENT: absent,
+            UNKNOWN: unknown,
+            DEDUCTED_COLUMN: calculate_deduction(late, absent),
+        })
+
+    return pd.DataFrame(rows, columns=columns)

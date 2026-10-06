@@ -1,15 +1,8 @@
-session_id,course_code,session_date,student_id,full_name,status
-PY101-W5,PY101,2026-10-05,001,Nadia Hirwa,Present
-PY101-W5,PY101,2026-10-05,002,Jean-Paul Mugisha,Absent
-PY101-W5,PY101,2026-10-05,003,Grace O'Neil,Present
-PY101-W5,PY101,2026-10-05,004,Eric Niyonzima,Present
-PY101-W5,PY101,2026-10-05,005,Aline Uwase,Present
-PY101-W5,PY101,2026-10-05,006,Patrick Habimana,Present
-PY101-W5,PY101,2026-10-05,007,Diane Mukamana,Absent
-PY101-W5,PY101,2026-10-05,008,Kevin Ndayishimiye,Present
-PY101-W5,PY101,2026-10-05,009,Sandrine Ingabire,Present
-PY101-W5,PY101,2026-10-05,010,Olivier Nkurunziza,Present
-PY101-W5,PY101,2026-10-05,013,Alice Uwimana,Present
-PY101-W2,PY101,2026-09-14,003,Grace O'Neil,Present
-PY101-W4,PY101,2026-09-28,010,Olivier Nkurunziza,Late
-DS102-W3,DS102,2026-09-23,012,Samuel Bizimana,Excused
+course_code,date,student_id,full_name,status,type
+PY101,19/09/2026,011,Claudine Umutoni,Present,Tutorial
+MA103,25/09/2026,007,Diane Mukamana,Excused,
+PY101,21/09/2026,013,Alice Uwimana,Present,
+PY101,22/09/2026,013,Alice Uwimana,Late,
+PY101,23/09/2026,013,Alice Uwimana,Present,
+PY101,24/09/2026,013,Alice Uwimana,Present,
+PY101,25/09/2026,013,Alice Uwimana,Present,

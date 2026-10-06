@@ -5,7 +5,7 @@ SQL lives in database.py, and calculations live in analytics.py.
 """
 
 import sqlite3
-from datetime import date, timedelta
+from datetime import date
 
 import altair as alt
 import pandas as pd
@@ -25,11 +25,10 @@ STATUS_COLORS = ["#0072B2", "#56B4E9", "#CC79A7", "#E69F00", "#999999"]
 # Width in pixels, so the longest import reasons fit without being cut off.
 REASON_COLUMN_WIDTH = 1500
 ALL_STUDENTS = "All students"
-# A new course's end date starts 16 weeks after its start date (one semester).
-DEFAULT_COURSE_WEEKS = 16
-# Every date input shows dates the same way as the rest of the app.
-DATE_INPUT_FORMAT = "YYYY-MM-DD"
+# Every date input shows dates as DD/MM/YYYY, like the rest of the app (BR-23).
+DATE_INPUT_FORMAT = "DD/MM/YYYY"
 NO_COURSES_MESSAGE = "No courses yet. Create a course first."
+NO_BLOCKS_MESSAGE = "No blocks yet. Create a block first."
 NO_STUDENTS_MESSAGE = "No students yet. Add a student first."
 NO_DATA_MESSAGE = (
     "No sessions with enrolled students yet. Create a course, a session and a student "
@@ -43,18 +42,18 @@ NO_MATCH_MESSAGE = (
 # ---------- Helpers ----------
 
 def format_course_period(start_date, end_date):
-    """Return a course period for labels, like '2026-09-07 to 2026-12-18' (FR-25)."""
-    start_text = start_date
+    """Return a course period for labels, like '07/09/2026 to 25/09/2026' (FR-25, BR-23)."""
+    start_text = validation.format_date(start_date)
     if start_date is None:
         start_text = "no start"
-    end_text = end_date
+    end_text = validation.format_date(end_date)
     if end_date is None:
         end_text = "no end"
     return f"{start_text} to {end_text}"
 
 
 def make_course_label(course):
-    """Return a label like 'PY101 - Programming with Python (2026-09-07 to 2026-12-18)'."""
+    """Return a label like 'PY101 - Programming with Python (07/09/2026 to 25/09/2026)'."""
     period = format_course_period(course["start_date"], course["end_date"])
     return f"{course['course_code']} - {course['course_name']} ({period})"
 
@@ -76,12 +75,23 @@ def get_student_choices(connection):
     return choices
 
 
+def describe_session(session):
+    """Return a label like 'Mon 07/09/2026 - Class' or 'Sat 12/09/2026 - Tutorial T1'."""
+    session_date = session["session_date"]
+    weekday = validation.weekday_name(session_date)[:3]
+    label = f"{weekday} {validation.format_date(session_date)} - {session['session_type']}"
+
+    # A tutorial's number is the last part of its ID, like 'T1' in 'PY101-2026-09-10-T1'.
+    if session["session_type"] == validation.TUTORIAL:
+        label = label + " " + session["session_id"].split("-")[-1]
+    return label
+
+
 def get_session_choices(connection, course_code):
-    """Return a dict that maps a label like 'PY101-W1 (2026-09-07)' to its session ID."""
+    """Return a dict that maps a label like 'Mon 07/09/2026 - Class' to its session ID."""
     choices = {}
     for session in database.get_sessions_for_course(connection, course_code):
-        label = f"{session['session_id']} ({session['session_date']})"
-        choices[label] = session["session_id"]
+        choices[describe_session(session)] = session["session_id"]
     return choices
 
 
@@ -123,14 +133,14 @@ def show_enrollment_period_inputs(course, start_value, end_value, key):
 
 
 def describe_enrollment_dates(start_date, end_date):
-    """Return text like 'from 2026-10-06' or 'from 2026-09-01 until 2026-12-15'."""
+    """Return text like 'from 14/09/2026' or 'from 14/09/2026 until 18/09/2026'."""
     if start_date is None:
         text = "from the first session"
     else:
-        text = f"from {start_date}"
+        text = f"from {validation.format_date(start_date)}"
 
     if end_date is not None:
-        text = text + f" until {end_date}"
+        text = text + f" until {validation.format_date(end_date)}"
     return text
 
 
@@ -145,20 +155,75 @@ def join_course_codes(connection, student_id):
     return ", ".join(codes)
 
 
-# ---------- FR-03: create a course ----------
+# ---------- BR-18: create a block ----------
+
+def get_block_choices(connection):
+    """Return a dict that maps a label like 'B1-2627 - Block 1, 2026-27 (07/09/2026 to
+    25/09/2026)' to its block ID."""
+    choices = {}
+    for block in database.get_blocks(connection):
+        period = format_course_period(block["start_date"], block["end_date"])
+        choices[f"{block['block_id']} - {block['block_name']} ({period})"] = block["block_id"]
+    return choices
+
+
+def show_add_block(connection):
+    """Show the form to create a block: ID, name and a Monday start (BR-18)."""
+    st.subheader("Create a block")
+
+    with st.form("add_block_form", clear_on_submit=True):
+        id_text = st.text_input("Block ID", placeholder="B1-2627")
+        name_text = st.text_input("Block name", placeholder="Block 1, 2026-27")
+        start = st.date_input("Start date (a Monday)", value=None, format=DATE_INPUT_FORMAT)
+        st.caption("The block lasts 3 weeks: the end date (Friday of week 3) is calculated.")
+        submitted = st.form_submit_button("Create block")
+
+    if not submitted:
+        return
+
+    block_id = validation.normalize_block_id(id_text)
+    block_name = validation.clean_course_name(name_text)
+    start_date = to_text_or_none(start)
+
+    if block_id is None:
+        st.error(validation.BLOCK_ID_ERROR)
+    elif block_name is None:
+        st.error(validation.BLOCK_NAME_ERROR)
+    elif start_date is None:
+        st.error(validation.DATE_ERROR)
+    elif not validation.is_monday(start_date):
+        st.error(validation.BLOCK_START_ERROR.format(
+            validation.format_date(start_date), validation.weekday_name(start_date)
+        ))
+    elif database.get_block(connection, block_id) is not None:
+        st.error(validation.BLOCK_EXISTS_ERROR.format(block_id))
+    else:
+        end_date = database.add_block(connection, block_id, block_name, start_date)
+        st.success(
+            f"Block {block_id} created, running "
+            f"{validation.describe_course_period(start_date, end_date)}."
+        )
+
+
+# ---------- FR-03: create a course in a block ----------
 
 def show_add_course(connection):
-    """Show the form to create a course (FR-03)."""
+    """Show the form to create a course in a block; its class days are generated (FR-03).
+
+    The course takes the block's dates (BR-19). A narrower period can be set afterwards
+    in Edit & Delete > Change course dates.
+    """
     st.subheader("Create a course")
+
+    block_choices = get_block_choices(connection)
+    if not block_choices:
+        st.info(NO_BLOCKS_MESSAGE)
+        return
 
     with st.form("add_course_form", clear_on_submit=True):
         code_text = st.text_input("Course code", placeholder="PY101")
         name_text = st.text_input("Course name", placeholder="Programming with Python")
-        start = st.date_input("Start date", value=date.today(), format=DATE_INPUT_FORMAT)
-        end = st.date_input(
-            "End date", value=date.today() + timedelta(weeks=DEFAULT_COURSE_WEEKS),
-            format=DATE_INPUT_FORMAT,
-        )
+        block_label = st.selectbox("Block", list(block_choices))
         submitted = st.form_submit_button("Create course")
 
     if not submitted:
@@ -166,40 +231,41 @@ def show_add_course(connection):
 
     course_code = validation.normalize_course_code(code_text)
     course_name = validation.clean_course_name(name_text)
-    start_date = start.isoformat()
-    end_date = end.isoformat()
+    block_id = block_choices[block_label]
 
     if course_code is None:
         st.error(validation.COURSE_CODE_ERROR)
     elif course_name is None:
         st.error(validation.COURSE_NAME_ERROR)
-    elif not validation.are_period_dates_valid(start_date, end_date):
-        st.error(validation.COURSE_DATES_ERROR)
     elif database.course_exists(connection, course_code):
         st.error(validation.COURSE_EXISTS_ERROR.format(course_code))
     else:
-        database.add_course(connection, course_code, course_name, start_date, end_date)
+        class_days = database.create_course(connection, course_code, course_name, block_id)
         st.success(
-            f"Course {course_code} - {course_name} created, running "
-            f"{validation.describe_course_period(start_date, end_date)}."
+            f"Course {course_code} - {course_name} created in block {block_id}, "
+            f"with {class_days} class days (every weekday)."
         )
 
 
 def show_course_list(connection):
-    """List every course with its period (FR-25)."""
+    """List every course with its block and period (FR-25, BR-23)."""
     st.subheader("Courses")
 
     rows = []
     for course in database.get_courses(connection):
-        start_text = course["start_date"]
+        block_text = course["block_id"]
+        if block_text is None:
+            block_text = "No block"
+        start_text = validation.format_date(course["start_date"])
         if start_text is None:
             start_text = "no start"
-        end_text = course["end_date"]
+        end_text = validation.format_date(course["end_date"])
         if end_text is None:
             end_text = "no end"
         rows.append({
             "Course": course["course_code"],
             "Name": course["course_name"],
+            "Block": block_text,
             "Start date": start_text,
             "End date": end_text,
         })
@@ -296,42 +362,75 @@ def show_enroll_student(connection):
 
 # ---------- FR-06: create a session ----------
 
-def show_add_session(connection):
-    """Show the form to create a session for a course (FR-06)."""
-    st.subheader("Create a session")
+def show_add_tutorial(connection):
+    """Show the form to add a tutorial on any date inside the course period (BR-21).
+
+    Class days are generated with the course (BR-20), so only tutorials are added here.
+    """
+    st.subheader("Add a tutorial")
 
     course_choices = get_course_choices(connection)
     if not course_choices:
         st.info(NO_COURSES_MESSAGE)
         return
 
-    with st.form("add_session_form", clear_on_submit=True):
+    with st.form("add_tutorial_form", clear_on_submit=True):
         course_label = st.selectbox("Course", list(course_choices))
-        id_text = st.text_input("Session ID", placeholder="PY101-W5")
-        date_text = st.text_input("Session date (YYYY-MM-DD)", placeholder="2026-10-05")
-        submitted = st.form_submit_button("Create session")
+        chosen_date = st.date_input("Tutorial date", value=None, format=DATE_INPUT_FORMAT)
+        st.caption("Any date inside the course period, weekends included. "
+                   "Several tutorials on one date are numbered T1, T2...")
+        submitted = st.form_submit_button("Add tutorial")
 
     if not submitted:
         return
 
     course_code = course_choices[course_label]
-    session_id = validation.normalize_session_id(id_text)
-    session_date = validation.parse_date(date_text)
-
-    course = database.get_course(connection, course_code)
-
-    if session_id is None:
-        st.error(validation.SESSION_ID_ERROR)
-    elif session_date is None:
+    tutorial_date = to_text_or_none(chosen_date)
+    if tutorial_date is None:
         st.error(validation.DATE_ERROR)
-    elif not validation.is_date_in_period(session_date, course["start_date"], course["end_date"]):
-        period = validation.describe_course_period(course["start_date"], course["end_date"])
-        st.error(validation.SESSION_OUTSIDE_COURSE_ERROR.format(course_code, period))
-    elif database.get_session(connection, session_id) is not None:
-        st.error(validation.SESSION_EXISTS_ERROR.format(session_id))
-    else:
-        database.add_session(connection, session_id, course_code, session_date)
-        st.success(f"Session {session_id} on {session_date} created for {course_code}.")
+        return
+
+    try:
+        session_id = database.add_tutorial(connection, course_code, tutorial_date)
+    except ValueError as error:
+        st.error(str(error))
+        return
+
+    session = database.get_session(connection, session_id)
+    st.success(f"Tutorial added to {course_code}: {describe_session(session)}.")
+
+
+def show_session_list(connection):
+    """List a course's class days and tutorials in date order (BR-20, BR-21, BR-23)."""
+    st.subheader("Class days and tutorials")
+
+    course_choices = get_course_choices(connection)
+    if not course_choices:
+        st.info(NO_COURSES_MESSAGE)
+        return
+
+    course_label = st.selectbox("Course", list(course_choices), key="session_list_course")
+    course_code = course_choices[course_label]
+
+    rows = []
+    for session in database.get_sessions_for_course(connection, course_code):
+        rows.append({
+            "Date": validation.format_date(session["session_date"]),
+            "Day": validation.weekday_name(session["session_date"]),
+            "Type": session["session_type"],
+            "Session ID": session["session_id"],
+        })
+
+    if not rows:
+        st.info(f"{course_code} has no class days or tutorials.")
+        return
+
+    class_days = 0
+    for row in rows:
+        if row["Type"] == validation.CLASS:
+            class_days += 1
+    st.caption(f"{class_days} class days and {len(rows) - class_days} tutorials.")
+    st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
 
 
 # ---------- FR-07 and FR-08: record and correct attendance ----------
@@ -599,9 +698,10 @@ def show_rename_course(connection):
 
 
 def show_change_course_dates(connection):
-    """Change a course's start and end dates (FR-25).
+    """Change a course's start and end dates and regenerate its class days (FR-25, BR-20).
 
-    Refused when existing sessions would fall outside the new period.
+    A course in a block must stay inside the block (BR-19). Refused, with counts, when
+    saved records would be lost or an enrollment would fall outside the new period.
     """
     st.subheader("Change course dates")
 
@@ -639,34 +739,21 @@ def show_change_course_dates(connection):
     if has_end:
         end_date = end.isoformat()
 
-    if not validation.are_period_dates_valid(start_date, end_date):
-        st.error(validation.COURSE_DATES_ERROR)
-        return
-
     if start_date == current_start and end_date == current_end:
         st.info(validation.NO_CHANGE_MESSAGE.format("dates"))
         return
 
-    outside = database.count_sessions_outside_period(
-        connection, course_code, start_date, end_date
-    )
-    if outside > 0:
-        st.error(validation.SESSIONS_OUTSIDE_PERIOD_ERROR.format(outside, course_code))
+    # change_course_period() checks the block, enrollments and records, and
+    # regenerates the class days, all in one transaction (BR-19, BR-20, BR-17).
+    try:
+        result = database.change_course_period(connection, course_code, start_date, end_date)
+    except ValueError as error:
+        st.error(str(error))
         return
 
-    # BR-17: an enrollment with its own dates must stay inside the course period.
-    enrollments_outside = database.count_enrollments_outside_period(
-        connection, course_code, start_date, end_date
-    )
-    if enrollments_outside > 0:
-        st.error(validation.ENROLLMENTS_OUTSIDE_PERIOD_ERROR.format(
-            enrollments_outside, course_code
-        ))
-        return
-
-    database.update_course_dates(connection, course_code, start_date, end_date)
     finish_edit(
-        f"{course_code} now runs {validation.describe_course_period(start_date, end_date)}."
+        f"{course_code} now runs {validation.describe_course_period(start_date, end_date)}: "
+        f"{result['added']} class day(s) added, {result['removed']} session(s) removed."
     )
 
 
@@ -1055,9 +1142,16 @@ def validate_upload(connection, uploaded_file, rows):
         "file_id": uploaded_file.file_id,
         "filename": uploaded_file.name,
         "accepted": accepted,
-        "accepted_table": importer.make_table(accepted, with_reason=False),
-        "duplicates_table": importer.make_table(duplicates, with_reason=True),
-        "rejected_table": importer.make_table(rejected, with_reason=True),
+        # Dates are shown as DD/MM/YYYY (BR-23); "accepted" keeps the stored form for saving.
+        "accepted_table": analytics.format_date_columns(
+            importer.make_table(accepted, with_reason=False)
+        ),
+        "duplicates_table": analytics.format_date_columns(
+            importer.make_table(duplicates, with_reason=True)
+        ),
+        "rejected_table": analytics.format_date_columns(
+            importer.make_table(rejected, with_reason=True)
+        ),
     }
 
     # A new validation replaces the result of an earlier import.
@@ -1142,7 +1236,11 @@ def confirm_import(connection, validation_result):
 def show_import_tab(connection):
     """Show the import workflow: Upload, Preview, Validate, Review, Confirm, Result (IR-09)."""
     st.subheader("Import attendance from a CSV file")
-    st.caption("Required columns: " + ", ".join(importer.REQUIRED_COLUMNS))
+    st.caption(
+        "Required columns: " + ", ".join(importer.REQUIRED_COLUMNS)
+        + ". Optional: type (Class, the default, or Tutorial). "
+        "Dates as DD/MM/YYYY or YYYY-MM-DD."
+    )
     show_template_download()
 
     show_last_import_result()
@@ -1234,7 +1332,10 @@ def show_filters(connection):
     end_date = chosen_dates[1].isoformat()
 
     filtered = analytics.filter_records(all_records, course_code, start_date, end_date)
-    filter_text = f"Showing: {course_code}, from {start_date} to {end_date}."
+    filter_text = (
+        f"Showing: {course_code}, from {validation.format_date(start_date)} "
+        f"to {validation.format_date(end_date)}."
+    )
     return filtered, filter_text
 
 
@@ -1384,7 +1485,7 @@ def show_absence_alerts(filtered_records):
     if alerts.empty:
         st.success(f"No students have {minimum} or more absences in a row.")
     else:
-        st.dataframe(alerts, hide_index=True, width="stretch")
+        st.dataframe(analytics.format_date_columns(alerts), hide_index=True, width="stretch")
 
 
 def show_dashboard_tab(filtered_records, filter_text):
@@ -1406,7 +1507,11 @@ def show_dashboard_tab(filtered_records, filter_text):
 # ---------- FR-16 and FR-17: Reports ----------
 
 def show_table_with_download(table, file_name, button_key):
-    """Show a table and a CSV download made from that same table (FR-17)."""
+    """Show a table and a CSV download made from that same table (FR-17).
+
+    Dates are shown as DD/MM/YYYY on screen and in the download (BR-23).
+    """
+    table = analytics.format_date_columns(table)
     st.dataframe(table, hide_index=True, width="stretch")
     st.download_button(
         "Download as CSV",
@@ -1478,7 +1583,7 @@ def show_single_student_report(student_id, student_label, filtered_records):
     st.markdown("**By course**")
     course_summary = analytics.build_course_summary(student_records)
     course_table = analytics.format_summary_table(course_summary)
-    st.dataframe(course_table, hide_index=True, width="stretch")
+    st.dataframe(analytics.format_date_columns(course_table), hide_index=True, width="stretch")
 
     st.markdown("**Session history**")
     history = analytics.build_student_history(student_records)
@@ -1496,6 +1601,8 @@ def show_manage_tab(connection):
     # Courses run first so a course created in this run already appears in the
     # Students and Sessions lists. The order of the sub-tabs on screen stays the same.
     with courses_tab:
+        show_add_block(connection)
+        st.divider()
         show_add_course(connection)
         st.divider()
         show_course_list(connection)
@@ -1509,7 +1616,9 @@ def show_manage_tab(connection):
         show_enroll_student(connection)
 
     with sessions_tab:
-        show_add_session(connection)
+        show_add_tutorial(connection)
+        st.divider()
+        show_session_list(connection)
 
     with record_tab:
         show_record_attendance(connection)

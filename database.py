@@ -14,9 +14,17 @@ MANUAL_SOURCE = "manual"
 
 # The exact schema from Section 3 of the spec.
 SCHEMA = """
+CREATE TABLE IF NOT EXISTS blocks (
+    block_id   TEXT PRIMARY KEY,
+    block_name TEXT NOT NULL,
+    start_date TEXT NOT NULL,
+    end_date   TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS courses (
     course_code TEXT PRIMARY KEY,
     course_name TEXT NOT NULL,
+    block_id    TEXT REFERENCES blocks,
     start_date  TEXT,
     end_date    TEXT
 );
@@ -37,7 +45,8 @@ CREATE TABLE IF NOT EXISTS enrollments (
 CREATE TABLE IF NOT EXISTS sessions (
     session_id   TEXT PRIMARY KEY,
     course_code  TEXT NOT NULL REFERENCES courses,
-    session_date TEXT NOT NULL
+    session_date TEXT NOT NULL,
+    session_type TEXT NOT NULL DEFAULT 'Class' CHECK (session_type IN ('Class', 'Tutorial'))
 );
 
 CREATE TABLE IF NOT EXISTS attendance (
@@ -77,9 +86,70 @@ def create_tables(connection):
     """Create all tables if they do not exist yet, and upgrade an older database."""
     connection.executescript(SCHEMA)
     add_course_date_columns(connection)
+    add_course_block_column(connection)
     add_enrollment_date_columns(connection)
+    add_session_type_column(connection)
+    make_class_days_unique(connection)
     connection.commit()
     upgrade_attendance_statuses(connection)
+
+
+def get_column_names(connection, pragma_query):
+    """Return the column names from a 'PRAGMA table_info(...)' query."""
+    column_names = []
+    for column in connection.execute(pragma_query):
+        column_names.append(column[1])  # Position 1 of each row is the column name.
+    return column_names
+
+
+def add_course_block_column(connection):
+    """Add block_id to courses if an older database lacks it (BR-19).
+
+    Old courses get NULL, shown as "No block", and keep working as before.
+    """
+    if "block_id" not in get_column_names(connection, "PRAGMA table_info(courses)"):
+        connection.execute("ALTER TABLE courses ADD COLUMN block_id TEXT REFERENCES blocks")
+
+
+def add_session_type_column(connection):
+    """Add session_type to sessions if an older database lacks it (BR-20, BR-21).
+
+    Every old session becomes a 'Class'.
+    """
+    if "session_type" not in get_column_names(connection, "PRAGMA table_info(sessions)"):
+        connection.execute(
+            """
+            ALTER TABLE sessions ADD COLUMN session_type TEXT NOT NULL DEFAULT 'Class'
+                CHECK (session_type IN ('Class', 'Tutorial'))
+            """
+        )
+
+
+def make_class_days_unique(connection):
+    """Allow only one Class session per course per date (BR-20).
+
+    An older database may have two sessions of one course on the same date. The one
+    saved first (lowest rowid, SQLite's own row number) stays a Class and the others
+    become Tutorials, so no session and no record is lost. Then a unique index
+    protects the rule from now on.
+    """
+    connection.execute(
+        """
+        UPDATE sessions SET session_type = 'Tutorial'
+        WHERE session_type = 'Class'
+          AND rowid NOT IN (
+              SELECT MIN(rowid) FROM sessions
+              WHERE session_type = 'Class'
+              GROUP BY course_code, session_date
+          )
+        """
+    )
+    connection.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS one_class_per_course_per_day
+        ON sessions (course_code, session_date) WHERE session_type = 'Class'
+        """
+    )
 
 
 def upgrade_attendance_statuses(connection):
@@ -160,10 +230,10 @@ def add_course(connection, course_code, course_name, start_date=None, end_date=N
 
 
 def get_course(connection, course_code):
-    """Return one course row (code, name, start_date, end_date), or None if not saved."""
+    """Return one course row (code, name, block_id, start_date, end_date), or None."""
     return connection.execute(
         """
-        SELECT course_code, course_name, start_date, end_date
+        SELECT course_code, course_name, block_id, start_date, end_date
         FROM courses WHERE course_code = ?
         """,
         (course_code,),
@@ -194,6 +264,156 @@ def count_sessions_outside_period(connection, course_code, start_date, end_date)
         """,
         (course_code, start_date, start_date, end_date, end_date),
     )
+
+
+# ---------- Blocks (BR-18) ----------
+
+def add_block(connection, block_id, block_name, start_date):
+    """Save a block that starts on start_date (a Monday). Return its calculated end date."""
+    end_date = validation.calculate_block_end(start_date)
+    connection.execute(
+        "INSERT INTO blocks (block_id, block_name, start_date, end_date) VALUES (?, ?, ?, ?)",
+        (block_id, block_name, start_date, end_date),
+    )
+    connection.commit()
+    return end_date
+
+
+def get_block(connection, block_id):
+    """Return one block row, or None if the ID is not saved."""
+    return connection.execute(
+        "SELECT block_id, block_name, start_date, end_date FROM blocks WHERE block_id = ?",
+        (block_id,),
+    ).fetchone()
+
+
+def get_blocks(connection):
+    """Return all blocks, earliest first."""
+    return connection.execute(
+        "SELECT block_id, block_name, start_date, end_date FROM blocks "
+        "ORDER BY start_date, block_id"
+    ).fetchall()
+
+
+# ---------- Courses in blocks and class days (BR-19, BR-20) ----------
+
+def insert_class_days(connection, course_code, class_days):
+    """Insert one Class session per date. A date that already has one is skipped."""
+    for class_day in class_days:
+        connection.execute(
+            """
+            INSERT OR IGNORE INTO sessions (session_id, course_code, session_date, session_type)
+            VALUES (?, ?, ?, 'Class')
+            """,
+            (validation.make_class_session_id(course_code, class_day), course_code, class_day),
+        )
+
+
+def create_course(connection, course_code, course_name, block_id):
+    """Create a course in a block, with the block's dates and one class per weekday.
+
+    BR-19: the course takes the block dates. BR-20: a Class session is generated for
+    every Monday to Friday. Everything runs in one transaction. Returns the number of
+    class days created.
+    """
+    block = get_block(connection, block_id)
+    class_days = validation.list_class_days(block["start_date"], block["end_date"])
+
+    with connection:
+        connection.execute(
+            """
+            INSERT INTO courses (course_code, course_name, block_id, start_date, end_date)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (course_code, course_name, block_id, block["start_date"], block["end_date"]),
+        )
+        insert_class_days(connection, course_code, class_days)
+
+    return len(class_days)
+
+
+def count_records_outside_period(connection, course_code, start_date, end_date):
+    """Return how many saved records of a course are on sessions outside new dates."""
+    return count_rows(
+        connection,
+        """
+        SELECT COUNT(*)
+        FROM attendance
+        JOIN sessions ON sessions.session_id = attendance.session_id
+        WHERE sessions.course_code = ?
+          AND ((? IS NOT NULL AND sessions.session_date < ?)
+               OR (? IS NOT NULL AND sessions.session_date > ?))
+        """,
+        (course_code, start_date, start_date, end_date, end_date),
+    )
+
+
+def change_course_period(connection, course_code, start_date, end_date):
+    """Change a course's dates and regenerate its class days (FR-25, BR-19, BR-20).
+
+    Raises ValueError, and changes nothing, if the new dates are not valid, leave the
+    block, leave an enrollment outside them (BR-17), or would lose saved records.
+    Otherwise, in one transaction: sessions outside the new period are removed, class
+    days are added for weekdays that are new to the period, and the dates are saved.
+    Days inside both the old and the new period are not touched, so a removed holiday
+    stays removed. Returns {"added": ..., "removed": ...}.
+    """
+    course = get_course(connection, course_code)
+    old_start = course["start_date"]
+    old_end = course["end_date"]
+
+    if not validation.are_period_dates_valid(start_date, end_date):
+        raise ValueError(validation.COURSE_DATES_ERROR)
+
+    if course["block_id"] is not None:
+        block = get_block(connection, course["block_id"])
+        inside_block = validation.is_enrollment_in_course_period(
+            start_date, end_date, block["start_date"], block["end_date"]
+        )
+        if not inside_block or start_date is None or end_date is None:
+            period = validation.describe_course_period(block["start_date"], block["end_date"])
+            raise ValueError(validation.COURSE_OUTSIDE_BLOCK_ERROR.format(
+                course_code, block["block_id"], period
+            ))
+
+    enrollments_outside = count_enrollments_outside_period(
+        connection, course_code, start_date, end_date
+    )
+    if enrollments_outside > 0:
+        raise ValueError(validation.ENROLLMENTS_OUTSIDE_PERIOD_ERROR.format(
+            enrollments_outside, course_code
+        ))
+
+    records_lost = count_records_outside_period(connection, course_code, start_date, end_date)
+    if records_lost > 0:
+        raise ValueError(validation.RECORDS_ON_REMOVED_DAYS_ERROR.format(
+            records_lost, course_code
+        ))
+
+    # Weekdays of the new period that were outside the old period get a class day.
+    new_class_days = []
+    if start_date is not None and end_date is not None:
+        for class_day in validation.list_class_days(start_date, end_date):
+            if not validation.is_date_in_period(class_day, old_start, old_end):
+                new_class_days.append(class_day)
+
+    with connection:
+        removed = connection.execute(
+            """
+            DELETE FROM sessions
+            WHERE course_code = ?
+              AND ((? IS NOT NULL AND session_date < ?)
+                   OR (? IS NOT NULL AND session_date > ?))
+            """,
+            (course_code, start_date, start_date, end_date, end_date),
+        ).rowcount
+        insert_class_days(connection, course_code, new_class_days)
+        connection.execute(
+            "UPDATE courses SET start_date = ?, end_date = ? WHERE course_code = ?",
+            (start_date, end_date, course_code),
+        )
+
+    return {"added": len(new_class_days), "removed": removed}
 
 
 def course_exists(connection, course_code):
@@ -238,10 +458,10 @@ def count_enrollments_outside_period(connection, course_code, start_date, end_da
 
 
 def get_courses(connection):
-    """Return all courses with their dates, sorted by code."""
+    """Return all courses with their block and dates, sorted by code."""
     return connection.execute(
         """
-        SELECT course_code, course_name, start_date, end_date
+        SELECT course_code, course_name, block_id, start_date, end_date
         FROM courses ORDER BY course_code
         """
     ).fetchall()
@@ -410,11 +630,17 @@ def get_enrolled_students(connection, course_code):
 
 # ---------- Sessions ----------
 
-def add_session(connection, session_id, course_code, session_date):
-    """Save a new session for a course."""
+def add_session(connection, session_id, course_code, session_date, session_type="Class"):
+    """Save a session with a given ID (used for old-style data and tests).
+
+    New class days are generated by create_course() and tutorials by add_tutorial().
+    """
     connection.execute(
-        "INSERT INTO sessions (session_id, course_code, session_date) VALUES (?, ?, ?)",
-        (session_id, course_code, session_date),
+        """
+        INSERT INTO sessions (session_id, course_code, session_date, session_type)
+        VALUES (?, ?, ?, ?)
+        """,
+        (session_id, course_code, session_date, session_type),
     )
     connection.commit()
 
@@ -422,22 +648,78 @@ def add_session(connection, session_id, course_code, session_date):
 def get_session(connection, session_id):
     """Return one session row, or None if the ID is not saved."""
     return connection.execute(
-        "SELECT session_id, course_code, session_date FROM sessions WHERE session_id = ?",
+        """
+        SELECT session_id, course_code, session_date, session_type
+        FROM sessions WHERE session_id = ?
+        """,
         (session_id,),
     ).fetchone()
 
 
 def get_sessions_for_course(connection, course_code):
-    """Return the sessions of a course in date order."""
+    """Return the sessions (class days and tutorials) of a course in date order."""
     return connection.execute(
         """
-        SELECT session_id, course_code, session_date
+        SELECT session_id, course_code, session_date, session_type
         FROM sessions
         WHERE course_code = ?
         ORDER BY session_date, session_id
         """,
         (course_code,),
     ).fetchall()
+
+
+def get_class_session(connection, course_code, session_date):
+    """Return the Class session of a course on a date, or None if there is no class."""
+    return connection.execute(
+        """
+        SELECT session_id, course_code, session_date, session_type
+        FROM sessions
+        WHERE course_code = ? AND session_date = ? AND session_type = 'Class'
+        """,
+        (course_code, session_date),
+    ).fetchone()
+
+
+def get_tutorials_on_date(connection, course_code, session_date):
+    """Return the tutorials of a course on a date, T1 first."""
+    return connection.execute(
+        """
+        SELECT session_id, course_code, session_date, session_type
+        FROM sessions
+        WHERE course_code = ? AND session_date = ? AND session_type = 'Tutorial'
+        ORDER BY session_id
+        """,
+        (course_code, session_date),
+    ).fetchall()
+
+
+def next_tutorial_id(connection, course_code, session_date, taken_ids=()):
+    """Return the next free tutorial ID on a date: T1, then T2, and so on (BR-21).
+
+    taken_ids lists IDs planned but not saved yet (for example earlier rows of a file).
+    """
+    number = 1
+    while True:
+        session_id = validation.make_tutorial_session_id(course_code, session_date, number)
+        if get_session(connection, session_id) is None and session_id not in taken_ids:
+            return session_id
+        number = number + 1
+
+
+def add_tutorial(connection, course_code, session_date):
+    """Add a tutorial on any date inside the course period and return its ID (BR-21).
+
+    Raises ValueError if the date is outside the course period (BR-16).
+    """
+    course = get_course(connection, course_code)
+    if not validation.is_date_in_period(session_date, course["start_date"], course["end_date"]):
+        period = validation.describe_course_period(course["start_date"], course["end_date"])
+        raise ValueError(validation.SESSION_OUTSIDE_COURSE_ERROR.format(course_code, period))
+
+    session_id = next_tutorial_id(connection, course_code, session_date)
+    add_session(connection, session_id, course_code, session_date, validation.TUTORIAL)
+    return session_id
 
 
 # ---------- Attendance ----------
@@ -509,7 +791,8 @@ def record_attendance(connection, student_id, session_id, status, source=MANUAL_
 def import_records(connection, records, source, enrollment_starts):
     """Save validated import rows in one transaction and return how many were saved.
 
-    Each record has student_id, full_name, course_code, session_id, session_date and status.
+    Each record has student_id, full_name, course_code, session_id, date, type and status.
+    A tutorial that does not exist yet is created (IR-13); a class day always exists.
     The student is enrolled before attendance is saved, so BR-09 holds (IR-06).
     enrollment_starts maps (student_id, course_code) to the start date of a NEW
     enrollment (BR-15); an existing enrollment keeps its dates.
@@ -527,10 +810,11 @@ def import_records(connection, records, source, enrollment_starts):
             )
             connection.execute(
                 """
-                INSERT OR IGNORE INTO sessions (session_id, course_code, session_date)
-                VALUES (?, ?, ?)
+                INSERT OR IGNORE INTO sessions
+                    (session_id, course_code, session_date, session_type)
+                VALUES (?, ?, ?, ?)
                 """,
-                (record["session_id"], record["course_code"], record["session_date"]),
+                (record["session_id"], record["course_code"], record["date"], record["type"]),
             )
             enrollment_key = (record["student_id"], record["course_code"])
             connection.execute(
@@ -567,6 +851,7 @@ def clear_all_data(connection):
         connection.execute("DELETE FROM sessions")
         connection.execute("DELETE FROM students")
         connection.execute("DELETE FROM courses")
+        connection.execute("DELETE FROM blocks")
 
 
 # ---------- Rename (FR-22) ----------

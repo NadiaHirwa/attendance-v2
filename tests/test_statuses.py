@@ -3,18 +3,16 @@
 Every test uses a temporary in-memory database, never attendance.db.
 """
 
-import os
 import sqlite3
 import unittest
 
 import analytics
 import database
 import importer
-import seed_demo
+from tests import v2_data
 
 TEST_DB_PATH = ":memory:"
-HEADER = "session_id,course_code,session_date,student_id,full_name,status\n"
-DEMO_FOLDER = os.path.join(os.path.dirname(os.path.dirname(__file__)), "demo_data")
+HEADER = "course_code,date,student_id,full_name,status\n"
 
 # An attendance table from before this version: its CHECK allows only two statuses.
 OLD_SCHEMA = """
@@ -141,9 +139,9 @@ class SeedTestCase(unittest.TestCase):
 
     def setUp(self):
         """Load the demo data."""
-        self.connection = seed_demo.reset_database(TEST_DB_PATH)
-        seed_demo.add_demo_data(self.connection)
-        seed_demo.add_demo_attendance(self.connection)
+        self.connection = v2_data.reset_database(TEST_DB_PATH)
+        v2_data.add_demo_data(self.connection)
+        v2_data.add_demo_attendance(self.connection)
 
     def tearDown(self):
         """Close the database after each test."""
@@ -160,16 +158,12 @@ class SeedTestCase(unittest.TestCase):
         self.assertIsNone(error)
         return importer.validate_rows(self.connection, rows)
 
-    def read_demo_file(self, name):
-        """Return the bytes of a file in demo_data."""
-        with open(os.path.join(DEMO_FOLDER, name), "rb") as demo_file:
-            return demo_file.read()
 
 
 class TestSeedAndImport(SeedTestCase):
 
     def test_seed_totals_unchanged(self):
-        """FR-26: the seed still gives 63 Present, 0 Late, 0 Excused, 9 Absent, 4 Unknown."""
+        """FR-26: the Version 2 data gives 63 Present, 0 Late, 0 Excused, 9 Absent, 4 Unknown."""
         totals = self.totals()
 
         self.assertEqual(
@@ -183,50 +177,14 @@ class TestSeedAndImport(SeedTestCase):
     def test_import_late_and_excused(self):
         """FR-26: rows with L and E are accepted and saved as Late and Excused."""
         accepted, duplicates, rejected = self.validate_bytes(make_file([
-            "PY101-W2,PY101,2026-09-14,003,Grace O'Neil,L",
-            "DS102-W3,DS102,2026-09-23,008,Kevin Ndayishimiye,e",
+            "PY101,2026-09-14,003,Grace O'Neil,L",
+            "DS102,2026-09-23,008,Kevin Ndayishimiye,e",
         ]))
         importer.apply_import(self.connection, accepted, "test.csv")
 
         self.assertEqual(len(accepted), 2)
         self.assertEqual(database.get_status(self.connection, "003", "PY101-W2"), "Late")
         self.assertEqual(database.get_status(self.connection, "008", "DS102-W3"), "Excused")
-
-    def test_messy_file_still_gives_5_2_10(self):
-        """FR-26: messy_import.csv still gives 5 accepted, 2 skipped and 10 rejected."""
-        accepted, duplicates, rejected = self.validate_bytes(
-            self.read_demo_file("messy_import.csv")
-        )
-
-        self.assertEqual((len(accepted), len(duplicates), len(rejected)), (5, 2, 10))
-        reasons = ""
-        for row in rejected:
-            reasons = reasons + row["reason"] + "\n"
-        self.assertIn('Got "maybe"', reasons)
-
-    def test_clean_file_adds_one_late_and_one_excused(self):
-        """FR-26: clean_import.csv gives 14 accepted, including 1 Late and 1 Excused.
-
-        By hand after the import: Present 63 + 9 (PY101-W5) + 1 (003 at W2) = 73;
-        Absent 9 + 2 (002 and 007 at W5) = 11; Late 1 (010 at W4); Excused 1 (012 at DS102-W3);
-        Unknown 1 (008 at DS102-W3). Rate (73 + 1) / (73 + 1 + 11) = 74 / 85 = 87.06%;
-        completeness 86 / 87 = 98.85%.
-        """
-        accepted, duplicates, rejected = self.validate_bytes(
-            self.read_demo_file("clean_import.csv")
-        )
-        self.assertEqual((len(accepted), len(duplicates), len(rejected)), (14, 0, 0))
-
-        importer.apply_import(self.connection, accepted, "clean_import.csv")
-        totals = self.totals()
-
-        self.assertEqual(
-            (totals["present"], totals["late"], totals["excused"],
-             totals["absent"], totals["unknown"]),
-            (73, 1, 1, 11, 1),
-        )
-        self.assertEqual(analytics.format_rate(totals["attendance_rate"]), "87.06%")
-        self.assertEqual(analytics.format_rate(totals["completeness"]), "98.85%")
 
     def test_summaries_have_late_and_excused_columns(self):
         """FR-26: student, session and course summaries show Late and Excused."""

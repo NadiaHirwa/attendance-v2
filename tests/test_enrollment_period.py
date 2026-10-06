@@ -7,7 +7,7 @@ Seed course dates: PY101 2026-09-07 to 2026-12-18.
 import unittest
 
 import database
-import seed_demo
+from tests import v2_data
 import validation
 
 TEST_DB_PATH = ":memory:"
@@ -86,9 +86,9 @@ class SeedTestCase(unittest.TestCase):
 
     def setUp(self):
         """Load the demo data and add student 013, who has no course yet."""
-        self.connection = seed_demo.reset_database(TEST_DB_PATH)
-        seed_demo.add_demo_data(self.connection)
-        seed_demo.add_demo_attendance(self.connection)
+        self.connection = v2_data.reset_database(TEST_DB_PATH)
+        v2_data.add_demo_data(self.connection)
+        v2_data.add_demo_attendance(self.connection)
         database.add_student(self.connection, "013", "Emile Uwase")
 
     def tearDown(self):
