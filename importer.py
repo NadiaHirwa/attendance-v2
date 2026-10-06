@@ -33,6 +33,7 @@ ROW_COLUMN = "row"
 FIX_COLUMNS = [ROW_COLUMN, "column", "before", "after", "why"]
 # S1: a saved name and a file name this alike (0 to 1, ignoring case) are the same person.
 SIMILAR_NAME_RATIO = 0.8
+WEEKEND_DAYS = ("Saturday", "Sunday")
 REASON_COLUMN = "reason"
 # Row 1 of the file is the header, so the first data row is row 2, like in a spreadsheet.
 FIRST_DATA_ROW = 2
@@ -151,11 +152,17 @@ def fix_course_code(value):
 
 
 def fix_date(value):
-    """Return (fixed date, why). D/M/YYYY, DD/MM/YYYY and YYYY-MM-DD become YYYY-MM-DD."""
-    fixed = validation.parse_date(value)
-    if fixed is None:
-        fixed = validation.parse_short_date(value)
-    return fixed, validation.FIX_DATE
+    """Return (fixed date, why). D/M/YYYY and YYYY-MM-DD become DD/MM/YYYY (BR-23).
+
+    DD/MM/YYYY is the normal form of the file, so it is not a fix; clean_row stores
+    every date as YYYY-MM-DD later.
+    """
+    stored = validation.parse_date(value)
+    if stored is None:
+        stored = validation.parse_short_date(value)
+    if stored is None:
+        return None, validation.FIX_DATE
+    return validation.format_date(stored), validation.FIX_DATE
 
 
 def fix_type(value):
@@ -391,6 +398,19 @@ def check_course_period(connection, row):
     return make_reason(row[ROW_COLUMN], message)
 
 
+def is_removed_class_day(connection, course_code, session_date):
+    """Return True if a weekday has no class although the course's class days were generated.
+
+    A course with dates got a class day on every weekday (BR-20), so a missing one was
+    removed (for example a holiday). A course without dates is an older course whose
+    class days were added by hand, so nothing can be said about a missing day.
+    """
+    if validation.weekday_name(session_date) in WEEKEND_DAYS:
+        return False
+    course = database.get_course(connection, course_code)
+    return course["start_date"] is not None and course["end_date"] is not None
+
+
 def find_session(connection, row, file_tutorials):
     """Set row['session_id'] to the class day or tutorial of the row. Return a reason or None.
 
@@ -404,7 +424,10 @@ def find_session(connection, row, file_tutorials):
     if row[TYPE_COLUMN] == validation.CLASS:
         class_session = database.get_class_session(connection, course_code, session_date)
         if class_session is None:
-            message = validation.NO_CLASS_ERROR.format(
+            message = validation.NO_CLASS_ERROR
+            if is_removed_class_day(connection, course_code, session_date):
+                message = validation.CLASS_DAY_REMOVED_ERROR
+            message = message.format(
                 course_code,
                 validation.weekday_name(session_date),
                 validation.format_date(session_date),
@@ -669,8 +692,8 @@ def make_cleaned_csv(accepted, duplicates):
     """Return every valid row after fixes and accepted suggestions as CSV text (FR-31).
 
     Accepted rows and duplicates are listed in file order, in the Version 3 columns,
-    with dates in the stored form YYYY-MM-DD, so importing the cleaned file again
-    needs no auto-fixes. Rejected rows are not included.
+    with dates as DD/MM/YYYY (BR-23), so importing the cleaned file again needs no
+    auto-fixes. Rejected rows are not included.
     """
     rows = sorted(accepted + duplicates, key=lambda row: row[ROW_COLUMN])
     output = io.StringIO()
@@ -679,6 +702,9 @@ def make_cleaned_csv(accepted, duplicates):
     for row in rows:
         values = []
         for column in FILE_COLUMNS:
-            values.append(row[column])
+            value = row[column]
+            if column == "date":
+                value = validation.format_date(value)
+            values.append(value)
         writer.writerow(values)
     return output.getvalue()

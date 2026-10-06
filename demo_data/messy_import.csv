@@ -1,7 +1,7 @@
 Course_Code,Date,Student_ID,Full_Name,Status,Type,Notes
-  PY101 ,16/09/2026,3,Grace O’Neil,p,,auto-fixes: spaces; DD/MM/YYYY date; ID 3 -> 003; curly apostrophe; p -> Present
+  PY101 ,16/09/2026,3,Grace O’Neil,p,,auto-fixes: spaces; ID 3 -> 003; curly apostrophe; p -> Present
 ds102,24/9/2026,08,Kevin  Ndayishimiye,L,tut,auto-fixes: capitals; D/M/YYYY date; ID 08 -> 008; double space; L -> Late; tut -> Tutorial
-MA103,2026-09-25,007,Diane Mukamana,excused,CLASS,auto-fixes: full word in lowercase; type capitals
+MA103,2026-09-25,007,Diane Mukamana,excused,CLASS,auto-fixes: YYYY-MM-DD date -> DD/MM/YYYY; full word in lowercase; type capitals
 PY101,2026-09-19,011,Claudine Umutoni,E,Tutorial,auto-fix: E -> Excused (fills a missing tutorial record)
 PY101,2026-09-07,0,Zero Id,P,,rejected: ID 0 is not padded
 PY101,2026-09-07,001,Nadia Hirwa,maybe,,rejected: bad status

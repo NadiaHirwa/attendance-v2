@@ -1,14 +1,18 @@
-# Attendance Management and Analytics System (Version 2)
+# Attendance Management and Analytics System (Version 3)
 
-A Streamlit app that records Present/Absent attendance for several courses and sessions,
-saves it permanently in SQLite, imports CSV files safely, and summarizes attendance with
-filters, a chart, and CSV downloads.
+A Streamlit app that organises teaching in 3-week **blocks**, generates a class for every
+weekday of each course (with tutorials on any day), records Present / Late / Excused / Absent
+attendance in SQLite, and calculates **mark deductions** for Late and Absent. It imports CSV
+files safely, fixing simple mistakes automatically and suggesting fixes for the rest, and
+reports attendance with a weekly view per student, a class register per course, filters,
+charts and CSV downloads.
 
 Built for *Programming with Python*, AIMS Rwanda, 2026-2027.
 The full requirements are in [ATTENDANCE_SPEC.md](ATTENDANCE_SPEC.md) (Version 3), and
 [TRACEABILITY.md](TRACEABILITY.md) links each requirement to its code and tests.
-Version 3 (blocks, class days, tutorials, deductions) is being built in stages; what it changes
-and why is in the change log, [ATTENDANCE_V3_CHANGES.md](ATTENDANCE_V3_CHANGES.md).
+What Version 3 changed from Version 2, and why, is in the change log,
+[ATTENDANCE_V3_CHANGES.md](ATTENDANCE_V3_CHANGES.md). [TEST_CHECKLIST.md](TEST_CHECKLIST.md)
+lists manual checks with the expected numbers.
 
 ## Install
 
@@ -43,14 +47,19 @@ student per course.
 
 The app opens in the browser with four tabs:
 
-- **Dashboard**: metrics, attendance rate by session, and students below a threshold.
-- **Manage Attendance**: create courses, students and sessions, enroll students,
-  record and correct attendance, and search students.
-- **Import & Validate**: upload a CSV file, review accepted, duplicate and rejected rows,
-  then confirm. Try `demo_data/clean_import.csv` and `demo_data/messy_import.csv`.
-- **Reports**: the filtered attendance table and per-student summary, with CSV downloads.
+- **Dashboard**: metrics, attendance rate by session, status chart, students below a
+  threshold and absence alerts.
+- **Manage Attendance**, in sub-tabs: **Blocks & Courses** (class days are generated),
+  **Students** (search, profile, enroll, late start or early leave), **Class days & Tutorials**
+  (add tutorials, remove a holiday), **Record attendance** (block → course → day, "Mark all
+  Present", then the exceptions) and **Settings** (the Late and Absent deductions).
+- **Import & Validate**: upload a CSV file and review the **Auto-fixed** values, the
+  **Suggestions** to accept and the **Rejected** rows, then confirm. A cleaned file can be
+  downloaded. Try `demo_data/clean_import.csv` and `demo_data/messy_import.csv`.
+- **Reports**: per-student summaries with deducted marks, the deductions export, the class
+  register per course and week, and the single-student report with its weekly view.
 
-The course and date filters for the Dashboard and Reports are in the sidebar.
+The Block → Course → date filters for the Dashboard and Reports are in the sidebar.
 
 If the database has no courses when the app starts, the demo data is created automatically.
 The sidebar also has a **Reset demo data** button (tick the confirmation box first), which
@@ -89,10 +98,10 @@ The tests use a temporary in-memory database and never touch `attendance.db`.
 |---|---|
 | `validation.py` | Rules for IDs, names, codes, dates and statuses, and the error messages |
 | `database.py` | SQLite connection, tables, and every query |
-| `analytics.py` | Rates, summaries, filters and report tables (no Streamlit) |
-| `importer.py` | CSV reading, validation and import |
+| `analytics.py` | Rates, deductions, summaries, filters, weekly view and register (no Streamlit) |
+| `importer.py` | CSV reading, auto-fixes, suggestions, validation and import |
 | `app.py` | Streamlit screens only |
 | `seed_demo.py` | Creates the demo database |
-| `demo_data/` | A clean and a messy CSV file for the import demo |
+| `demo_data/` | A clean and a messy CSV file for the import demo (the messy one triggers every auto-fix and suggestion) |
 | `tests/` | Unit tests |
 | `backup/attendance_app.py` | The Version 1 app, kept as a fallback demo |

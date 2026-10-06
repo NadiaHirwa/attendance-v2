@@ -6,6 +6,7 @@
 | Author | Nadia Iradukunda Hirwa |
 | Builds on | `ATTENDANCE_V2_SPEC.md`, now renamed `ATTENDANCE_SPEC.md` (every rule there stays unless changed here) |
 | Source | Tutor comments, October 2026 |
+| Status | **Built.** Stages 0 to 6 complete; all merged into `ATTENDANCE_SPEC.md` and released (Stage 6: verification for Version 3) |
 
 This file lists only what **changes or is added**. Stage 0 merges it into the main specification.
 After Stage 0 it is kept as the **change log** for Version 3; `ATTENDANCE_SPEC.md` is the full specification.
@@ -248,3 +249,5 @@ Stage 6: verification only, no new features.
 5. Then push to origin main (this redeploys the live app) and tell me when it is pushed.
 No Co-Authored-By line or mention of yourself in any commit.
 ```
+
+**Stage 6 fixes (done):** zero-padded `DD/MM/YYYY` is the normal import form and is not listed as an auto-fix (only forms such as `24/9/2026` or `2026-09-24` are); the cleaned file writes `DD/MM/YYYY`. A class row on a removed weekday says "(class day removed)"; a weekend keeps the plain message. The review also found that an import stored an enrollment start equal to the course start instead of NULL (BR-17); fixed.

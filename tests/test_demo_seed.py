@@ -224,10 +224,10 @@ class TestDemoFiles(SeedV3TestCase):
         return len(result["accepted"]), len(result["duplicates"]), len(result["rejected"])
 
     def test_messy_file_counts(self):
-        """FR-31: messy_import.csv gives 31 auto-fixes, 5 suggestions, 6 / 2 / 11."""
+        """FR-31: messy_import.csv gives 39 auto-fixes, 5 suggestions, 6 / 2 / 11."""
         result = self.review_messy_file(accept_all=False)
 
-        self.assertEqual(len(result["fixes"]), 31)
+        self.assertEqual(len(result["fixes"]), 39)
         kinds = []
         for suggestion in result["suggestions"]:
             kinds.append(suggestion["kind"])
@@ -242,7 +242,8 @@ class TestDemoFiles(SeedV3TestCase):
         self.assertIn('Got "maybe"', reasons)
         self.assertIn('Row 8: Unknown course "BIO200".', reasons)
         self.assertIn("Row 9: PY101 has no class on Saturday 12/09/2026.", reasons)
-        self.assertIn("Row 10: DS102 has no class on Wednesday 16/09/2026.", reasons)
+        self.assertIn("Row 10: DS102 has no class on Wednesday 16/09/2026 (class day removed).",
+                      reasons)
         self.assertIn("Row 11: PY101 runs from 07/09/2026 to 25/09/2026, not on 02/10/2026.",
                       reasons)
         self.assertIn('Suggestion: "Use saved name Eric Niyonzima"', reasons)

@@ -60,10 +60,10 @@ class TestAutoFixes(FixesTestCase):
 
     def test_spaces_are_fixed(self):
         """FR-31: extra spaces around values and inside names are removed."""
-        result = self.review([" PY101 , 2026-09-07 ,001 ,Nadia   Hirwa,Present ,"])
+        result = self.review([" PY101 , 07/09/2026 ,001 ,Nadia   Hirwa,Present ,"])
 
         self.assertEqual(self.fixes_of(result, "course_code"), [(" PY101 ", "PY101")])
-        self.assertEqual(self.fixes_of(result, "date"), [(" 2026-09-07 ", "2026-09-07")])
+        self.assertEqual(self.fixes_of(result, "date"), [(" 07/09/2026 ", "07/09/2026")])
         self.assertEqual(self.fixes_of(result, "student_id"), [("001 ", "001")])
         self.assertEqual(self.fixes_of(result, "full_name"), [("Nadia   Hirwa", "Nadia Hirwa")])
         self.assertEqual(self.fixes_of(result, "status"), [("Present ", "Present")])
@@ -120,8 +120,8 @@ class TestAutoFixes(FixesTestCase):
         self.assertEqual(self.fixes_of(result, "student_id"), [])
         self.assertEqual(len(result["rejected"]), 1)
 
-    def test_dates_are_fixed_to_the_stored_form(self):
-        """FR-31: D/M/YYYY and DD/MM/YYYY become YYYY-MM-DD; YYYY-MM-DD is unchanged."""
+    def test_dates_are_fixed_to_dd_mm_yyyy(self):
+        """FR-31, BR-23: D/M/YYYY and YYYY-MM-DD become DD/MM/YYYY; DD/MM/YYYY is not a fix."""
         result = self.review([
             "PY101,7/9/2026,001,Nadia Hirwa,P,",
             "PY101,14/09/2026,001,Nadia Hirwa,P,",
@@ -130,9 +130,10 @@ class TestAutoFixes(FixesTestCase):
 
         self.assertEqual(
             self.fixes_of(result, "date"),
-            [("7/9/2026", "2026-09-07"), ("14/09/2026", "2026-09-14")],
+            [("7/9/2026", "07/09/2026"), ("2026-09-07", "07/09/2026")],
         )
         self.assertEqual(result["accepted"][0]["session_id"], "PY101-W1")
+        self.assertEqual(result["accepted"][1]["date"], "2026-09-14")
 
     def test_impossible_short_date_is_rejected(self):
         """FR-31: 31/9/2026 is not a real date, so it is not fixed."""
@@ -156,8 +157,8 @@ class TestAutoFixes(FixesTestCase):
         self.assertEqual(result["accepted"][1]["type"], "Tutorial")
 
     def test_empty_type_is_not_listed(self):
-        """FR-31: an empty type already means Class, so it is not an auto-fix."""
-        result = self.review(["PY101,2026-09-07,001,Nadia Hirwa,Present,"])
+        """FR-31: an empty type (Class) and a DD/MM/YYYY date are not auto-fixes."""
+        result = self.review(["PY101,07/09/2026,001,Nadia Hirwa,Present,"])
 
         self.assertEqual(result["fixes"], [])
 
@@ -340,9 +341,9 @@ class TestSuggestions(FixesTestCase):
         self.assertEqual(
             cleaned,
             "course_code,date,student_id,full_name,status,type\n"
-            "PY101,2026-09-14,001,Nadia Hirwa,Present,Class\n"
-            "PY101,2026-09-07,001,Nadia Hirwa,Present,Class\n"
-            "PY101,2026-09-14,002,Fabrice Gasana,Late,Class\n",
+            "PY101,14/09/2026,001,Nadia Hirwa,Present,Class\n"
+            "PY101,07/09/2026,001,Nadia Hirwa,Present,Class\n"
+            "PY101,14/09/2026,002,Fabrice Gasana,Late,Class\n",
         )
 
     def test_cleaned_file_can_be_imported_again(self):
@@ -365,6 +366,49 @@ class TestSuggestions(FixesTestCase):
         ], ["2-S1"])
 
         self.assertEqual(importer.count_accepted_suggestions(result["suggestions"]), 1)
+
+
+class TestRemovedClassDay(FixesTestCase):
+    """Course DS102 in block B1 (07/09 to 25/09/2026) with Wednesday 16/09 removed."""
+
+    def setUp(self):
+        """Add the block, the course and the student, then remove the holiday."""
+        super().setUp()
+        database.add_block(self.connection, "B1", "Block 1", "2026-09-07")
+        database.create_course(self.connection, "DS102", "Data Science Basics", "B1")
+        database.enroll_student(self.connection, "001", "DS102")
+        database.delete_session(self.connection, "DS102-2026-09-16")
+
+    def test_removed_class_day_says_so(self):
+        """IR-12: a weekday whose class was removed names the removed class day."""
+        result = self.review(["DS102,16/09/2026,001,Nadia Hirwa,P,"])
+
+        self.assertEqual(
+            result["rejected"][0]["reason"],
+            "Row 2: DS102 has no class on Wednesday 16/09/2026 (class day removed).",
+        )
+
+    def test_import_start_on_course_start_is_stored_as_null(self):
+        """BR-17: a new student's first row on the course's first day stores start NULL."""
+        result = self.review([
+            "DS102,07/09/2026,002,Eric Niyonzima,P,",
+            "DS102,08/09/2026,003,Aline Uwase,P,",
+        ])
+        importer.apply_import(self.connection, result["accepted"], "file.csv")
+
+        first = database.get_enrollment(self.connection, "002", "DS102")
+        later = database.get_enrollment(self.connection, "003", "DS102")
+        self.assertIsNone(first["start_date"])
+        self.assertEqual(later["start_date"], "2026-09-08")
+
+    def test_weekend_keeps_the_plain_message(self):
+        """IR-12: a weekend has no class anyway, so the message does not say removed."""
+        result = self.review(["DS102,19/09/2026,001,Nadia Hirwa,P,"])
+
+        self.assertEqual(
+            result["rejected"][0]["reason"],
+            "Row 2: DS102 has no class on Saturday 19/09/2026.",
+        )
 
 
 class TestNextFreeId(unittest.TestCase):

@@ -67,6 +67,7 @@ RECORDS_ON_REMOVED_DAYS_ERROR = (
     "the new period and would be lost. Delete those records first or choose a wider period."
 )
 NO_CLASS_ERROR = "{} has no class on {} {}."
+CLASS_DAY_REMOVED_ERROR = "{} has no class on {} {} (class day removed)."
 DEDUCTION_ERROR = "Invalid {} deduction {}. Expected a whole number from 0 to 10."
 STATUS_ERROR = (
     "Invalid status. Expected P, L, E, A, Present, Late, Excused or Absent."
@@ -150,7 +151,7 @@ FIX_SPACES = "Removed extra spaces."
 FIX_APOSTROPHE = "Replaced a curly apostrophe."
 FIX_CAPITALS = "Standard capitals."
 FIX_STUDENT_ID = "Padded the student ID to 3 digits."
-FIX_DATE = "Changed the date to the stored form YYYY-MM-DD."
+FIX_DATE = "Changed the date to DD/MM/YYYY."
 FIX_STATUS = "Changed to the full status word."
 FIX_TYPE = "Changed to the standard type."
 DUPLICATE_SAVED_REASON = "Already saved with the same status."

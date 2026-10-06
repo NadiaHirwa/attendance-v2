@@ -55,6 +55,18 @@ ENROLLED_UNTIL_COLUMN = "Enrolled until"
 # Shown instead of an empty date (BR-15).
 NO_START_TEXT = "start"
 NO_END_TEXT = "now"
+# Cell symbols on screen (FR-27). The CSV download uses the words below instead.
+WEEKLY_SYMBOLS = {
+    PRESENT: "✅", LATE: "🕐", EXCUSED: "📝", ABSENT: "❌", UNKNOWN: "❔", None: "—",
+}
+WEEKLY_WORDS = {
+    PRESENT: "Present", LATE: "Late", EXCUSED: "Excused", ABSENT: "Absent",
+    UNKNOWN: "Not recorded", None: "No class",
+}
+# Cell letters in the class register (FR-28); None means outside the enrollment period.
+REGISTER_LETTERS = {PRESENT: "P", LATE: "L", EXCUSED: "E", ABSENT: "A", UNKNOWN: "?", None: "—"}
+WEEKDAY_COLUMNS = ["Mon", "Tue", "Wed", "Thu", "Fri"]
+TUTORIALS_COLUMN = "Tutorials"
 
 
 def calculate_rates(present, late, excused, absent, unknown):
@@ -644,20 +656,6 @@ def build_student_profile(frame, late_deduction, absent_deduction):
 
 
 # ---------- Weekly view and class register (FR-27, FR-28) ----------
-
-# Cell symbols on screen (FR-27). The CSV download uses the words below instead.
-WEEKLY_SYMBOLS = {
-    PRESENT: "✅", LATE: "🕐", EXCUSED: "📝", ABSENT: "❌", UNKNOWN: "❔", None: "—",
-}
-WEEKLY_WORDS = {
-    PRESENT: "Present", LATE: "Late", EXCUSED: "Excused", ABSENT: "Absent",
-    UNKNOWN: "Not recorded", None: "No class",
-}
-# Cell letters in the class register (FR-28); None means outside the enrollment period.
-REGISTER_LETTERS = {PRESENT: "P", LATE: "L", EXCUSED: "E", ABSENT: "A", UNKNOWN: "?", None: "—"}
-WEEKDAY_COLUMNS = ["Mon", "Tue", "Wed", "Thu", "Fri"]
-TUTORIALS_COLUMN = "Tutorials"
-
 
 def get_statuses_by_session(records):
     """Return {session_id: status} for the expected sessions in a records frame.

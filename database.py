@@ -76,6 +76,9 @@ CREATE TABLE attendance_new (
 )
 """
 
+LATE_DEDUCTION_KEY = "late_deduction"
+ABSENT_DEDUCTION_KEY = "absent_deduction"
+
 
 def get_connection(path=DB_PATH):
     """Open the database with foreign keys switched on."""
@@ -101,10 +104,6 @@ def create_tables(connection):
 
 
 # ---------- Settings (BR-22) ----------
-
-LATE_DEDUCTION_KEY = "late_deduction"
-ABSENT_DEDUCTION_KEY = "absent_deduction"
-
 
 def add_default_settings(connection):
     """Save Late = 1 and Absent = 2 if the settings are not there yet (BR-22).
@@ -938,13 +937,16 @@ def import_records(connection, records, source, enrollment_starts):
                 (record["session_id"], record["course_code"], record["date"], record["type"]),
             )
             enrollment_key = (record["student_id"], record["course_code"])
+            # A start equal to the course's start is stored as NULL (BR-17).
+            start_date, end_date = check_enrollment_dates(
+                connection, record["course_code"], enrollment_starts[enrollment_key], None
+            )
             connection.execute(
                 """
                 INSERT OR IGNORE INTO enrollments (student_id, course_code, start_date)
                 VALUES (?, ?, ?)
                 """,
-                (record["student_id"], record["course_code"],
-                 enrollment_starts[enrollment_key]),
+                (record["student_id"], record["course_code"], start_date),
             )
             if record.get("update"):
                 # "Use file" (FR-31 S4): the saved record takes the file's status.
