@@ -686,6 +686,35 @@ def show_change_course_dates(connection):
     )
 
 
+def describe_current_enrollment(start_date, end_date, course):
+    """Return text like 'Current: 2026-09-20 to 2026-12-18 (joined late)'.
+
+    A date that is not set follows the course, so the course's date is shown instead.
+    """
+    course_start = course["start_date"]
+    course_end = course["end_date"]
+
+    shown_start = start_date
+    if shown_start is None:
+        shown_start = course_start
+    shown_end = end_date
+    if shown_end is None:
+        shown_end = course_end
+
+    starts_late = shown_start != course_start
+    ends_early = shown_end != course_end
+    if starts_late and ends_early:
+        note = "custom period"
+    elif starts_late:
+        note = "joined late"
+    elif ends_early:
+        note = "leaves early"
+    else:
+        note = "full course period"
+
+    return f"Current: {format_course_period(shown_start, shown_end)} ({note})"
+
+
 def show_change_enrollment_dates(connection):
     """Change the start and end dates of one enrollment (FR-24).
 
@@ -716,10 +745,7 @@ def show_change_enrollment_dates(connection):
     enrollment = database.get_enrollment(connection, student_id, course_code)
     current_start = enrollment["start_date"]
     current_end = enrollment["end_date"]
-    st.caption(
-        f"Current: enrolled in {course_code} "
-        f"{describe_enrollment_dates(current_start, current_end)}."
-    )
+    st.caption(describe_current_enrollment(current_start, current_end, course))
 
     # A date that is not set follows the course, so show the course's date instead.
     start_value = to_date_or_none(current_start)
