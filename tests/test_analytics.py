@@ -237,7 +237,8 @@ class TestFilteredCalculations(SeedDataTestCase):
         self.assertEqual(py101["attendance_rate"], 86.84)
 
     def test_courses_without_block_are_one_bar(self):
-        """FR-14 (Stage 7): courses of an older database form one "No block" bar."""
+        """FR-14 (Stage 7): at block level, courses of an older database form one
+        "No block" bar."""
         summary = analytics.build_level_summary(self.filter_all(), analytics.LEVEL_BLOCK)
 
         self.assertEqual(list(summary[analytics.CHART_LABEL_COLUMN]), ["No block"])

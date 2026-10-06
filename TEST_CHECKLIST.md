@@ -3,7 +3,7 @@
 **Before every section:** run `.venv\Scripts\python seed_demo.py`, restart Streamlit, refresh the browser.
 Every row starts from the seed data unless it says otherwise.
 
-✔ = confirmed by running the code (on a copy of the database or by an automated test). Run `.venv\Scripts\python -m unittest`: **288 tests, all OK**.
+✔ = confirmed by running the code (on a copy of the database or by an automated test). Run `.venv\Scripts\python -m unittest`: **292 tests, all OK**.
 
 Dates are shown as **DD/MM/YYYY** everywhere on screen and in downloads (BR-23).
 
@@ -189,7 +189,8 @@ Columns: `course_code, date, student_id, full_name, status`, optional `type` (Cl
 |---|---|---|
 | 9.1 | All blocks, all courses | ✔ Five bordered cards: **Attendance rate 97.99%, Completeness 99.21%, Deducted marks 30, Students below threshold 0, Absence alerts 1**. Under them ● Present 477, ● Late 10, ● Excused 4, ● Absent 10, ● Not recorded 4 (dots in the chart colours) and "12 students · 44 class days · 6 tutorials". Caption "Showing: All blocks, All courses, from 07/09/2026 to 25/09/2026." |
 | 9.1b | Sidebar with All blocks | ✔ Block, Course and only a **Custom dates** box (no Week box). |
-| 9.1c | Charts with All blocks | ✔ "Attendance rate by block" (one bar, B1-2627, labelled 97.99%) and "Recording status by block". |
+| 9.1c | Charts with All blocks | ✔ The demo has only one block, so the charts are "Attendance rate by course" and "Recording status by course": PY101 **96.30%**, DS102 **98.63%**, MA103 **99.38%**. |
+| 9.1d | Add a second block with a course, an enrolled student and one record; All blocks | ✔ "Attendance rate by block": one bar per block (B1-2627 97.99%). Choosing a block goes back to one bar per course. |
 | 9.2 | Block → B1-2627 | ✔ The Course box lists only DS102, MA103 and PY101. A **Week** box: All weeks, Week 1 (07/09–11/09), Week 2 (14/09–18/09), Week 3 (21/09–25/09). Charts "by course": DS102 **98.63%**, MA103 **99.38%**, PY101 **96.30%**. |
 | 9.2b | B1-2627 → Week 2 | ✔ Caption "Showing: B1-2627, All courses, Week 2 (14/09–18/09)." Cards 98.73%, 98.76%, Deducted marks 8, alerts 0. The PY101 Saturday tutorial 19/09 is in week 2. |
 | 9.3 | B1-2627 → PY101, All weeks | ✔ 177 / 5 / 1 / 7 / 2 under the cards, 96.30%, 98.96%, "12 students · 15 class days · 2 tutorials". Charts "by week": **98.48%, 98.53%, 90.91%**. |

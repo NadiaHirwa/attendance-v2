@@ -49,22 +49,44 @@ class SeedTestCase(unittest.TestCase):
 
 class TestChartLevel(unittest.TestCase):
 
-    def test_level_follows_the_filters(self):
-        """Stage 7: All blocks -> block; one block -> course; one course -> week or day."""
-        all_courses = analytics.ALL_COURSES
-        self.assertEqual(analytics.choose_chart_level(analytics.ALL_BLOCKS, all_courses),
-                         analytics.LEVEL_BLOCK)
-        self.assertEqual(analytics.choose_chart_level("B1-2627", all_courses),
-                         analytics.LEVEL_COURSE)
-        self.assertEqual(analytics.choose_chart_level(None, all_courses),
-                         analytics.LEVEL_COURSE)
-        self.assertEqual(analytics.choose_chart_level("B1-2627", "PY101"),
+    def test_several_blocks_all_blocks_is_by_block(self):
+        """All blocks with several blocks: one bar per block."""
+        self.assertEqual(
+            analytics.choose_chart_level(analytics.ALL_BLOCKS, analytics.ALL_COURSES, 2),
+            analytics.LEVEL_BLOCK,
+        )
+
+    def test_only_one_block_is_by_course(self):
+        """All blocks with only one block (or none): one bar per course."""
+        for block_count in (0, 1):
+            self.assertEqual(
+                analytics.choose_chart_level(
+                    analytics.ALL_BLOCKS, analytics.ALL_COURSES, block_count
+                ),
+                analytics.LEVEL_COURSE,
+            )
+
+    def test_chosen_block_is_by_course(self):
+        """One block chosen (or "No block"), even with several blocks: one bar per course."""
+        for block_choice in ("B1-2627", None):
+            self.assertEqual(
+                analytics.choose_chart_level(block_choice, analytics.ALL_COURSES, 2),
+                analytics.LEVEL_COURSE,
+            )
+
+    def test_one_course_is_by_week_or_day(self):
+        """One course: one bar per week, or per day with "Show by day"; "Show by day" only
+        matters for one course."""
+        self.assertEqual(analytics.choose_chart_level("B1-2627", "PY101", 2),
                          analytics.LEVEL_WEEK)
-        self.assertEqual(analytics.choose_chart_level("B1-2627", "PY101", by_day=True),
+        self.assertEqual(analytics.choose_chart_level(analytics.ALL_BLOCKS, "PY101", 2),
+                         analytics.LEVEL_WEEK)
+        self.assertEqual(analytics.choose_chart_level("B1-2627", "PY101", 1, by_day=True),
                          analytics.LEVEL_DAY)
-        # "Show by day" only matters for one course.
-        self.assertEqual(analytics.choose_chart_level("B1-2627", all_courses, by_day=True),
-                         analytics.LEVEL_COURSE)
+        self.assertEqual(
+            analytics.choose_chart_level("B1-2627", analytics.ALL_COURSES, 1, by_day=True),
+            analytics.LEVEL_COURSE,
+        )
 
     def test_titles_follow_the_level(self):
         """Stage 7: 'Attendance rate by course', 'Recording status by week'."""
@@ -76,15 +98,37 @@ class TestChartLevel(unittest.TestCase):
 
 class TestDrillDownRates(SeedTestCase):
 
-    def test_rate_per_block(self):
-        """Stage 7: the seed has one block, B1-2627, with the seed totals:
-        (477 + 10) / (477 + 10 + 10) = 487 / 497 = 97.99%."""
+    def test_only_one_block_shows_courses(self):
+        """The seed has only one block, so All blocks shows one bar per course:
+        PY101 96.30%, DS102 98.63%, MA103 99.38% (worked out in test_rate_per_course)."""
+        self.assertEqual(analytics.count_blocks(self.records), 1)
         level, summary = analytics.build_drilldown_chart_data(
             self.records, analytics.ALL_BLOCKS, analytics.ALL_COURSES
         )
 
+        self.assertEqual(level, analytics.LEVEL_COURSE)
+        self.assertEqual(self.rates_by_label(summary),
+                         {"PY101": 96.30, "DS102": 98.63, "MA103": 99.38})
+
+    def test_rate_per_block(self):
+        """With a second block, All blocks shows one bar per block. B2-2627 starts on
+        28/09/2026 with PY201; 001 is enrolled and Present on 28/09 only, so B2-2627 has
+        1 Present and 14 Unknown: 1 / 1 = 100.00%. B1-2627 keeps the seed totals:
+        (477 + 10) / (477 + 10 + 10) = 487 / 497 = 97.99%."""
+        database.add_block(self.connection, "B2-2627", "Block 2, 2026-27", "2026-09-28")
+        database.create_course(self.connection, "PY201", "Python 2", "B2-2627")
+        database.enroll_student(self.connection, "001", "PY201")
+        database.record_attendance(self.connection, "001", "PY201-2026-09-28", "Present")
+        records = analytics.build_records_frame(database.get_expected_records(self.connection))
+
+        level, summary = analytics.build_drilldown_chart_data(
+            records, analytics.ALL_BLOCKS, analytics.ALL_COURSES
+        )
+
         self.assertEqual(level, analytics.LEVEL_BLOCK)
-        self.assertEqual(self.rates_by_label(summary), {"B1-2627": 97.99})
+        self.assertEqual(list(summary[analytics.CHART_LABEL_COLUMN]), ["B1-2627", "B2-2627"])
+        self.assertEqual(self.rates_by_label(summary), {"B1-2627": 97.99, "B2-2627": 100.0})
+        self.assertEqual(summary.iloc[1]["Unknown"], 14)
 
     def test_rate_per_course(self):
         """Stage 7: one bar per course of B1-2627, by hand from the seed:

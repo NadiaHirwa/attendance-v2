@@ -319,17 +319,25 @@ def build_week_options(start_date, end_date):
 
 # ---------- Drill-down charts (Stage 7, FR-14, FR-20) ----------
 
-def choose_chart_level(block_choice, course_code, by_day=False):
+def count_blocks(frame):
+    """Return how many blocks the records belong to; courses with no block count as one."""
+    if frame.empty:
+        return 0
+    return frame["block_id"].fillna(NO_BLOCK_LABEL).nunique()
+
+
+def choose_chart_level(block_choice, course_code, block_count, by_day=False):
     """Return the chart level for the filters: 'block', 'course', 'week' or 'day'.
 
-    All blocks: one bar per block. One block (or "No block"): one bar per course.
+    All blocks with several blocks: one bar per block. One block chosen, or only one
+    block in the records: one bar per course (a single block bar says little).
     One course: one bar per week, or per day with "Show by day".
     """
     if course_code != ALL_COURSES:
         if by_day:
             return LEVEL_DAY
         return LEVEL_WEEK
-    if block_choice == ALL_BLOCKS:
+    if block_choice == ALL_BLOCKS and block_count > 1:
         return LEVEL_BLOCK
     return LEVEL_COURSE
 
@@ -404,7 +412,7 @@ def build_drilldown_chart_data(frame, block_choice, course_code, by_day=False,
                                period_start=None):
     """Return (level, summary) for both Dashboard charts, choosing the level from the
     filters (choose_chart_level) and grouping the records at that level."""
-    level = choose_chart_level(block_choice, course_code, by_day)
+    level = choose_chart_level(block_choice, course_code, count_blocks(frame), by_day)
     return level, build_level_summary(frame, level, period_start)
 
 
