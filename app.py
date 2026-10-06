@@ -16,10 +16,11 @@ import database
 import importer
 import validation
 
-STATUS_OPTIONS = ["Present", "Absent"]
-# Present blue, Absent orange, Unknown grey: colour-blind friendly (Okabe-Ito palette),
-# and grey suggests "missing". Same order as analytics.STATUS_ORDER.
-STATUS_COLORS = ["#0072B2", "#E69F00", "#999999"]
+STATUS_OPTIONS = ["Present", "Late", "Excused", "Absent"]
+# Present blue, Late light blue, Excused pink, Absent orange, Unknown grey: colour-blind
+# friendly (Okabe-Ito palette), and grey suggests "missing".
+# Same order as analytics.STATUS_ORDER.
+STATUS_COLORS = ["#0072B2", "#56B4E9", "#CC79A7", "#E69F00", "#999999"]
 # Width in pixels, so the longest import reasons fit without being cut off.
 REASON_COLUMN_WIDTH = 1500
 ALL_STUDENTS = "All students"
@@ -453,7 +454,10 @@ def show_record_attendance(connection):
         )
         return
 
-    st.caption("Choose Present or Absent for each student. A blank status means Unknown.")
+    st.caption(
+        "Choose Present, Late, Excused or Absent for each student. "
+        "A blank status means Unknown."
+    )
 
     with st.form("record_form"):
         edited_table = st.data_editor(
@@ -481,13 +485,14 @@ def show_record_attendance(connection):
 
 
 def show_session_counts(connection, session_id):
-    """Show Present, Absent, Unknown and the rates for one session."""
+    """Show the five status counts and the rates for one session."""
     frame = analytics.build_records_frame(database.get_expected_records(connection))
     session_frame = frame[frame["session_id"] == session_id]
     rates = analytics.summarize_frame(session_frame)
 
     st.caption(
-        f"{session_id}: {rates['present']} Present, {rates['absent']} Absent, "
+        f"{session_id}: {rates['present']} Present, {rates['late']} Late, "
+        f"{rates['excused']} Excused, {rates['absent']} Absent, "
         f"{rates['unknown']} Unknown. "
         f"Attendance rate {analytics.format_rate(rates['attendance_rate'])}, "
         f"completeness {analytics.format_rate(rates['completeness'])}."
@@ -1274,8 +1279,18 @@ def has_data_to_show(filtered_records, filter_text):
 
 # ---------- FR-13 to FR-15: Dashboard ----------
 
+def show_status_counts(rates):
+    """Show Present, Late, Excused, Absent and Unknown as five metrics in a row (FR-26)."""
+    columns = st.columns(5)
+    columns[0].metric("Present", rates["present"])
+    columns[1].metric("Late", rates["late"])
+    columns[2].metric("Excused", rates["excused"])
+    columns[3].metric("Absent", rates["absent"])
+    columns[4].metric("Unknown", rates["unknown"])
+
+
 def show_metrics(filtered_records):
-    """Show the seven dashboard numbers (FR-13)."""
+    """Show the dashboard numbers (FR-13, FR-26)."""
     metrics = analytics.calculate_dashboard_metrics(filtered_records)
 
     first_row = st.columns(4)
@@ -1284,10 +1299,7 @@ def show_metrics(filtered_records):
     first_row[2].metric("Attendance rate", analytics.format_rate(metrics["attendance_rate"]))
     first_row[3].metric("Completeness", analytics.format_rate(metrics["completeness"]))
 
-    second_row = st.columns(4)
-    second_row[0].metric("Present", metrics["present"])
-    second_row[1].metric("Absent", metrics["absent"])
-    second_row[2].metric("Unknown", metrics["unknown"])
+    show_status_counts(metrics)
 
 
 def show_rate_chart(filtered_records):
@@ -1350,7 +1362,10 @@ def show_status_chart(filtered_records):
         order=alt.Order(analytics.CHART_ORDER_COLUMN, type="quantitative"),
     )
     st.altair_chart(chart, width="stretch")
-    st.caption("Grey shows enrolled students with no record: missing data, not absence.")
+    st.caption(
+        "Grey shows enrolled students with no record: missing data, not absence. "
+        "Excused is recorded but not counted in the attendance rate."
+    )
 
 
 def show_threshold_list(filtered_records):
@@ -1457,15 +1472,13 @@ def show_all_students_report(filtered_records):
 # ---------- FR-19: single student report ----------
 
 def show_summary_metrics(records):
-    """Show Present, Absent, Unknown, attendance rate and completeness for some records."""
+    """Show the five status counts, attendance rate and completeness for some records."""
     rates = analytics.summarize_frame(records)
 
-    metric_columns = st.columns(5)
-    metric_columns[0].metric("Present", rates["present"])
-    metric_columns[1].metric("Absent", rates["absent"])
-    metric_columns[2].metric("Unknown", rates["unknown"])
-    metric_columns[3].metric("Attendance rate", analytics.format_rate(rates["attendance_rate"]))
-    metric_columns[4].metric("Completeness", analytics.format_rate(rates["completeness"]))
+    show_status_counts(rates)
+    rate_columns = st.columns(5)
+    rate_columns[0].metric("Attendance rate", analytics.format_rate(rates["attendance_rate"]))
+    rate_columns[1].metric("Completeness", analytics.format_rate(rates["completeness"]))
 
 
 def show_single_student_report(student_id, student_label, filtered_records):

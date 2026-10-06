@@ -7,8 +7,12 @@ never use Streamlit, so every calculation can be tested.
 import pandas as pd
 
 PRESENT = "Present"
+LATE = "Late"
+EXCUSED = "Excused"
 ABSENT = "Absent"
 UNKNOWN = "Unknown"
+# The count columns of every summary table, in this order (FR-26).
+COUNT_COLUMNS = [PRESENT, LATE, EXCUSED, ABSENT, UNKNOWN]
 NOT_AVAILABLE = "N/A"
 ALL_COURSES = "All courses"
 DEFAULT_THRESHOLD = 75
@@ -23,7 +27,7 @@ CURRENT_STREAK_COLUMN = "Current absence streak"
 LONGEST_STREAK_COLUMN = "Longest absence streak"
 LAST_ABSENCE_COLUMN = "Last absence"
 # Order of the parts of each stacked bar, from the bottom up.
-STATUS_ORDER = [PRESENT, ABSENT, UNKNOWN]
+STATUS_ORDER = [PRESENT, LATE, EXCUSED, ABSENT, UNKNOWN]
 
 RECORD_COLUMNS = [
     "student_id",
@@ -41,20 +45,23 @@ NO_START_TEXT = "start"
 NO_END_TEXT = "now"
 
 
-def calculate_rates(present, absent, unknown):
+def calculate_rates(present, late, excused, absent, unknown):
     """Return the counts, attendance rate and completeness for one group.
 
-    Attendance rate = Present / (Present + Absent) x 100 (BR-10).
-    Completeness = (Present + Absent) / Expected x 100 (BR-11).
+    Attendance rate = (Present + Late) / (Present + Late + Absent) x 100 (BR-10).
+    Excused is not in the rate: the student was not expected to come.
+    Completeness = (Present + Late + Excused + Absent) / Expected x 100 (BR-11).
     A rate is None when its denominator is 0, so there is no division error.
     """
-    recorded = present + absent
-    expected = present + absent + unknown
+    attended = present + late
+    counted_in_rate = present + late + absent
+    recorded = present + late + excused + absent
+    expected = recorded + unknown
 
-    if recorded == 0:
+    if counted_in_rate == 0:
         attendance_rate = None
     else:
-        attendance_rate = round(present / recorded * 100, 2)
+        attendance_rate = round(attended / counted_in_rate * 100, 2)
 
     if expected == 0:
         completeness = None
@@ -63,6 +70,8 @@ def calculate_rates(present, absent, unknown):
 
     return {
         "present": present,
+        "late": late,
+        "excused": excused,
         "absent": absent,
         "unknown": unknown,
         "expected": expected,
@@ -90,37 +99,40 @@ def build_records_frame(records):
 
 
 def count_statuses(frame):
-    """Return the number of Present, Absent and Unknown rows in a records frame."""
+    """Return the number of Present, Late, Excused, Absent and Unknown rows."""
     present = int((frame["status"] == PRESENT).sum())
+    late = int((frame["status"] == LATE).sum())
+    excused = int((frame["status"] == EXCUSED).sum())
     absent = int((frame["status"] == ABSENT).sum())
     unknown = int((frame["status"] == UNKNOWN).sum())
-    return present, absent, unknown
+    return present, late, excused, absent, unknown
 
 
 def summarize_frame(frame):
     """Return calculate_rates() for all rows of a records frame."""
-    present, absent, unknown = count_statuses(frame)
-    return calculate_rates(present, absent, unknown)
+    present, late, excused, absent, unknown = count_statuses(frame)
+    return calculate_rates(present, late, excused, absent, unknown)
 
 
 def build_summary_row(labels, group):
     """Return one summary row: the group's labels plus its counts and rates."""
     rates = summarize_frame(group)
     row = dict(labels)
-    row["Present"] = rates["present"]
-    row["Absent"] = rates["absent"]
-    row["Unknown"] = rates["unknown"]
+    row[PRESENT] = rates["present"]
+    row[LATE] = rates["late"]
+    row[EXCUSED] = rates["excused"]
+    row[ABSENT] = rates["absent"]
+    row[UNKNOWN] = rates["unknown"]
     row["attendance_rate"] = rates["attendance_rate"]
     row["completeness"] = rates["completeness"]
     return row
 
 
 def build_student_summary(frame):
-    """Return one row per student with Present, Absent, Unknown, rate and completeness."""
-    columns = [
-        "student_id", "full_name", "Present", "Absent", "Unknown",
-        "attendance_rate", "completeness",
-    ]
+    """Return one row per student with the five counts, rate and completeness."""
+    columns = (
+        ["student_id", "full_name"] + COUNT_COLUMNS + ["attendance_rate", "completeness"]
+    )
     rows = []
 
     for student_id, group in frame.groupby("student_id", sort=True):
@@ -135,10 +147,10 @@ def build_student_summary(frame):
 
 def build_session_summary(frame):
     """Return one row per session in date order, with counts and rates."""
-    columns = [
-        "session_id", "course_code", "session_date", "Present", "Absent",
-        "Unknown", "attendance_rate", "completeness",
-    ]
+    columns = (
+        ["session_id", "course_code", "session_date"] + COUNT_COLUMNS
+        + ["attendance_rate", "completeness"]
+    )
     rows = []
 
     for session_id, group in frame.groupby("session_id"):
@@ -258,7 +270,7 @@ def build_rate_chart_data(frame):
 
 
 def build_status_chart_data(frame):
-    """Return one row per session (label, course, Present, Absent, Unknown) in date order (FR-20).
+    """Return one row per session (label, course and the five counts) in date order (FR-20).
 
     Uses the same labels and order as build_rate_chart_data(). Sessions where
     nothing was recorded are kept: their whole bar is Unknown.
@@ -272,13 +284,13 @@ def build_status_chart_data(frame):
     rows = []
     for index, row in session_summary.iterrows():
         label = make_session_label(row["session_date"], row["session_id"], include_year)
-        rows.append({
+        chart_row = {
             CHART_LABEL_COLUMN: label,
             CHART_COURSE_COLUMN: row["course_code"],
-            PRESENT: row["Present"],
-            ABSENT: row["Absent"],
-            UNKNOWN: row["Unknown"],
-        })
+        }
+        for status in STATUS_ORDER:
+            chart_row[status] = row[status]
+        rows.append(chart_row)
 
     return pd.DataFrame(rows, columns=columns)
 
@@ -375,15 +387,15 @@ def format_enrollment_date(date_text, empty_text):
 
 
 def build_course_summary(frame):
-    """Return one row per course with the enrollment dates, Present, Absent, Unknown,
-    rate, completeness and the absence streaks (FR-19, FR-21, FR-24).
+    """Return one row per course with the enrollment dates, the five counts,
+    rate, completeness and the absence streaks (FR-19, FR-21, FR-24, FR-26).
 
     Meant for one student's records, so each course has one enrollment.
     """
     columns = [
         "course_code", ENROLLED_FROM_COLUMN, ENROLLED_UNTIL_COLUMN,
-        "Present", "Absent", "Unknown", "attendance_rate", "completeness",
-        LONGEST_STREAK_COLUMN, CURRENT_STREAK_COLUMN,
+    ] + COUNT_COLUMNS + [
+        "attendance_rate", "completeness", LONGEST_STREAK_COLUMN, CURRENT_STREAK_COLUMN,
     ]
     rows = []
 
@@ -411,8 +423,9 @@ def build_course_summary(frame):
 def calculate_streaks(statuses):
     """Return (longest streak, current streak) for statuses listed in session order (BR-14).
 
-    Consecutive 'Absent' statuses form a streak. 'Present' ends it, and so does
-    'Unknown': a missing record is not an absence and does not join two absences.
+    Consecutive 'Absent' statuses form a streak. Every other status ends it:
+    'Present', 'Late', 'Excused', and also 'Unknown' (a missing record is not an
+    absence and does not join two absences).
     The current streak is the run of 'Absent' at the end of the list.
     """
     longest = 0

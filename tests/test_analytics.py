@@ -37,7 +37,8 @@ class TestRates(unittest.TestCase):
 
     def test_t06_worked_example(self):
         """T06 (BR-10, BR-11): 7 Present, 2 Absent, 1 Unknown gives 77.78% and 90.00%."""
-        rates = analytics.calculate_rates(7, 2, 1)
+        # present, late, excused, absent, unknown
+        rates = analytics.calculate_rates(7, 0, 0, 2, 1)
 
         self.assertEqual(rates["attendance_rate"], 77.78)
         self.assertEqual(rates["completeness"], 90.0)
@@ -46,7 +47,7 @@ class TestRates(unittest.TestCase):
 
     def test_t07_no_records(self):
         """T07 (BR-10, BR-11): 0 records gives N/A with no division error."""
-        rates = analytics.calculate_rates(0, 0, 0)
+        rates = analytics.calculate_rates(0, 0, 0, 0, 0)
 
         self.assertIsNone(rates["attendance_rate"])
         self.assertIsNone(rates["completeness"])
@@ -283,7 +284,9 @@ class TestFilteredCalculations(SeedDataTestCase):
         for index, row in status_data.iterrows():
             course_code = row[analytics.CHART_COURSE_COLUMN]
             enrolled = len(database.get_enrolled_students(self.connection, course_code))
-            total = row["Present"] + row["Absent"] + row["Unknown"]
+            total = 0
+            for status in analytics.STATUS_ORDER:
+                total = total + row[status]
             self.assertEqual(total, enrolled, row[analytics.CHART_LABEL_COLUMN])
 
     def test_status_chart_by_hand(self):
@@ -317,16 +320,17 @@ class TestFilteredCalculations(SeedDataTestCase):
         self.assertEqual((last["Present"], last["Absent"], last["Unknown"]), (0, 0, 10))
 
     def test_status_chart_long_shape(self):
-        """FR-20: the long table has one row per session and status, Present first."""
+        """FR-20, FR-26: one row per session and status, in the order Present to Unknown."""
         status_data = analytics.build_status_chart_data(self.filter_all())
         long_data = analytics.make_status_chart_long(status_data)
 
-        self.assertEqual(len(long_data), 8 * 3)
-        first_session = long_data.iloc[0:3]
+        self.assertEqual(len(long_data), 8 * 5)
+        first_session = long_data.iloc[0:5]
         self.assertEqual(
-            list(first_session[analytics.CHART_STATUS_COLUMN]), ["Present", "Absent", "Unknown"]
+            list(first_session[analytics.CHART_STATUS_COLUMN]),
+            ["Present", "Late", "Excused", "Absent", "Unknown"],
         )
-        self.assertEqual(list(first_session[analytics.CHART_COUNT_COLUMN]), [9, 1, 0])
+        self.assertEqual(list(first_session[analytics.CHART_COUNT_COLUMN]), [9, 0, 0, 1, 0])
 
     def test_status_chart_keep_statuses(self):
         """FR-20: the status filter keeps only the chosen statuses, in stack order."""

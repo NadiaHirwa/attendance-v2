@@ -1,7 +1,7 @@
 # Attendance V2: Full Test Checklist
 
 **Before every round:** run `.venv\Scripts\python seed_demo.py`, restart Streamlit, refresh the browser.
-Starting point is always: **63 Present, 9 Absent, 4 Unknown, 87.50%, 94.74%**.
+Starting point is always: **63 Present, 0 Late, 0 Excused, 9 Absent, 4 Unknown, 87.50%, 94.74%**.
 
 ✔ = I already ran this case on a copy of your database, and the expected result below is what the code actually does.
 
@@ -92,6 +92,9 @@ The fix prompt that was used is kept at the end of this file for reference.
 | 5.1 | PY101 → PY101-W2 | 10 students. 003 is blank (Unknown). |
 | 5.2 | Set 003 to Present → Save | "1 new". Dashboard Unknown 4 → 3, completeness → 96.05%. |
 | 5.3 | Change a Present student to Absent → Save | "1 changed". Rate goes down. |
+| 5.3b | Status choices in the table | Present, Late, Excused, Absent (blank = Unknown). |
+| 5.3c | Set 003 (blank) in PY101-W2 to **Late** → Save | Late counts as attended: rate (63 + 1) / (63 + 1 + 9) = **87.67%**, completeness **96.05%**. |
+| 5.3d | Same, but set 003 to **Excused** instead | Excused is left out of the rate: rate stays **87.50%**, completeness **96.05%** (it is a record). |
 | 5.4 | Save again without changes | "0 new, 0 changed, N unchanged" (nothing rewritten). |
 | 5.5 | Clear a saved status → Save | ✔ **Fixed (0.1).** The record is kept, and a warning says it was cleared on screen but kept; to delete it, use Edit & Delete. Clearing a cell never deletes. |
 | 5.6 | Course with a session but no students | Message: no students enrolled. |
@@ -137,6 +140,8 @@ The fix prompt that was used is kept at the end of this file for reference.
 | 7.13 | Existing student in a course they're **not in yet** | ✔ Enrolled automatically from their earliest session date in the file, so they are Unknown only for that course's **later** sessions without a record. |
 | 7.13b | Row for a student whose enrollment starts later (e.g. enrolled from 2026-09-14, row dated 2026-09-07) | ✔ Rejected: "Student … is enrolled in PY101 from 2026-09-14, not on 2026-09-07." |
 | 7.14 | Unknown course `BIO200` | ✔ Rejected. Courses are never created by import. |
+| 7.14c | Status `L`, `late`, `E`, `Excused` | ✔ Accepted and saved as `Late` / `Excused`. Status `maybe` is rejected (that is the bad-status row in `messy_import.csv`). |
+| 7.14d | `clean_import.csv` → Validate → Confirm | ✔ 14 accepted, including 1 Late (010, PY101-W4) and 1 Excused (012, DS102-W3). Dashboard: **73 Present, 1 Late, 1 Excused, 11 Absent, 1 Unknown, 87.06%, 98.85%**. |
 | 7.14b | PY101 row dated `2027-01-05` (after the course ends) | ✔ Rejected: "Row N: PY101 runs from 2026-09-07 to 2026-12-18, not on 2027-01-05." |
 | 7.15 | Session ID that exists with a different date or course | ✔ Rejected. |
 | 7.16 | Same student twice in the file, different names | ✔ First row kept, later row rejected. |
@@ -149,14 +154,14 @@ The fix prompt that was used is kept at the end of this file for reference.
 
 | # | Do | Expected |
 |---|---|---|
-| 8.1 | All courses, full date range | Students 12, Sessions 8, Present 63, Absent 9, Unknown 4, 87.50%, 94.74%. |
+| 8.1 | All courses, full date range | Students 12, Sessions 8, Present 63, Late 0, Excused 0, Absent 9, Unknown 4, 87.50%, 94.74%. |
 | 8.2 | Course PY101 | Only PY101 numbers, the caption says "PY101". The date range jumps to PY101's period, **2026-09-07 to 2026-12-18**. |
 | 8.2b | Back to All courses | The date range goes back to the first and last session dates (2026-09-07 to 2026-09-30). |
 | 8.3 | Date range with no sessions (e.g. one day in August) | Info message, no empty charts. |
 | 8.4 | Pick only a start date | "Choose an end date" message. |
 | 8.5 | Rate chart | One bar per session, date order, coloured by course, 0 to 100 axis, readable labels. |
-| 8.6 | Status chart | Stacked Present (blue), Absent (orange), Unknown (grey). Each bar = enrolled students in that course. |
-| 8.7 | Status filter: untick Present and Absent | Only grey parts. Colours don't change. |
+| 8.6 | Status chart | ✔ Stacked Present (blue), Late (light blue), Excused (pink), Absent (orange), Unknown (grey), in that order. Each bar = enrolled students expected at that session. The caption says Excused is not counted in the rate. |
+| 8.7 | Status filter: untick Present, Late, Excused and Absent | Only grey parts. Colours don't change. |
 | 8.8 | Untick everything | Info message, not an empty chart. |
 | 8.9 | Threshold 75% | ✔ 3 students: **002 (25%), 011 (50%), 012 (66.67%)**, lowest first. |
 | 8.10 | Threshold 50% | ✔ Only 002. **011 at exactly 50% is not listed**: "below" means strictly less than. |
@@ -227,6 +232,8 @@ Run `seed_demo.py` before this section; each row starts from the seed data.
 - **Why does a new session lower completeness?** Every enrolled student is expected. If the file lists 3 of 10, 7 really are unrecorded.
 - **Why "below" is strictly less than?** Someone exactly at the threshold has met it.
 - **How is delete made safe?** Every delete shows what will be removed, with counts, and needs a ticked "cannot be undone" box. Each one runs in a single transaction, so it never half-finishes. A course in use cannot be deleted at all.
+- **Why is Excused not in the attendance rate?** The student was allowed to miss the session, so counting it as absent would be unfair and counting it as present would be untrue. It still counts for completeness, because it is a recorded status. Late counts as attended.
+- **What happens to an old database?** On start, `create_tables()` rebuilds the attendance table so it accepts Late and Excused: new table, copy every row, drop the old one, rename, all in one transaction. No record is lost.
 - **Can a session have any date?** No. Each course has a start and end date (BR-16), and a session must fall inside them. A course with no dates (an old database) has no limit. Course dates never change who is expected; that is what enrollment dates do (BR-15).
 
 ---

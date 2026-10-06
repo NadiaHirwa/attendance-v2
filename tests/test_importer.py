@@ -194,14 +194,14 @@ class TestValidateRows(ImporterTestCase):
         accepted, duplicates, rejected = self.validate([
             "PY101-W1,PY101,2026-09-07,12A,Nadia Hirwa,P",
             "PY101-W1,PY101,2026-02-30,001,Nadia Hirwa,P",
-            "PY101-W1,PY101,2026-09-07,001,Nadia Hirwa,late",
+            "PY101-W1,PY101,2026-09-07,001,Nadia Hirwa,maybe",
         ])
 
         self.assertEqual(len(rejected), 3)
         self.assertIn('Row 2: Invalid student ID', rejected[0]["reason"])
         self.assertIn('Got "12A"', rejected[0]["reason"])
         self.assertIn('Got "2026-02-30"', rejected[1]["reason"])
-        self.assertIn('Got "late"', rejected[2]["reason"])
+        self.assertIn('Got "maybe"', rejected[2]["reason"])
 
     def test_validation_never_writes(self):
         """IR-09: validating a file saves nothing before Confirm."""

@@ -61,13 +61,20 @@ class TestSessionDate(unittest.TestCase):
 class TestStatus(unittest.TestCase):
 
     def test_t05_status(self):
-        """T05 (BR-07): p, PRESENT and ' a ' are accepted; late and x are rejected."""
+        """T05 (BR-07): p, PRESENT and ' a ' are accepted; maybe and x are rejected."""
         self.assertEqual(validation.normalize_status("p"), "Present")
         self.assertEqual(validation.normalize_status("PRESENT"), "Present")
         self.assertEqual(validation.normalize_status(" a "), "Absent")
 
-        for status in ["late", "x"]:
+        for status in ["maybe", "x"]:
             self.assertIsNone(validation.normalize_status(status), status)
+
+    def test_t05_late_and_excused(self):
+        """T05 (BR-07, FR-26): L, late, E and EXCUSED are accepted and stored as full words."""
+        self.assertEqual(validation.normalize_status("L"), "Late")
+        self.assertEqual(validation.normalize_status("late"), "Late")
+        self.assertEqual(validation.normalize_status("e"), "Excused")
+        self.assertEqual(validation.normalize_status(" EXCUSED "), "Excused")
 
 
 if __name__ == "__main__":

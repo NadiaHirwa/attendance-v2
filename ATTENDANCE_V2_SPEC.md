@@ -16,10 +16,10 @@ Version 1 recorded attendance for one session and lost everything on exit.
 Version 2 records attendance for **several courses and sessions**, **saves it permanently**,
 **imports CSV files safely**, and **summarizes attendance** with filters, a chart, and downloads.
 
-**In scope:** courses, students, enrollments, sessions, Present/Absent recording and correction,
+**In scope:** courses, students, enrollments, sessions, Present/Late/Excused/Absent recording and correction,
 search, CSV import with validation, dashboard, reports, CSV downloads, SQLite storage.
 
-**Out of scope (Future Work):** login/roles, Late/Excused,
+**Out of scope (Future Work):** login/roles,
 conflict-resolution screens, import history tab, multi-file upload,
 student self-service view (requires login and roles).
 
@@ -48,7 +48,7 @@ sessions    (session_id  TEXT PRIMARY KEY,
              session_date TEXT NOT NULL)            -- YYYY-MM-DD
 attendance  (student_id  TEXT NOT NULL REFERENCES students,
              session_id  TEXT NOT NULL REFERENCES sessions,
-             status      TEXT NOT NULL CHECK (status IN ('Present', 'Absent')),
+             status      TEXT NOT NULL CHECK (status IN ('Present', 'Late', 'Excused', 'Absent')),
              source      TEXT NOT NULL,              -- 'manual' or the CSV filename
              recorded_at TEXT NOT NULL,              -- ISO timestamp
              PRIMARY KEY (student_id, session_id))
@@ -68,19 +68,21 @@ attendance  (student_id  TEXT NOT NULL REFERENCES students,
 | BR-04 | **Course name:** 1 to 80 characters after trimming. |
 | BR-05 | **Session ID:** 1 to 20 ASCII letters, digits, or hyphens, stored UPPERCASE. Unique across all courses. |
 | BR-06 | **Session date:** a real calendar date in `YYYY-MM-DD` format (`2026-02-30` is rejected). |
-| BR-07 | **Status:** accept `P`, `A`, `Present`, `Absent` in any case; store `Present` or `Absent`. |
+| BR-07 | **Status:** accept `P`, `L`, `E`, `A`, `Present`, `Late`, `Excused`, `Absent` in any case; store the full word (`Present`, `Late`, `Excused` or `Absent`). |
 | BR-08 | **One record per student per session.** Recording again for the same pair is an **edit**, not a new record. |
 | BR-09 | Attendance can be recorded only for a student **enrolled** in the session's course. |
-| BR-10 | **Attendance rate** = Present / (Present + Absent) x 100, 2 decimals. Shown as `N/A` when Present + Absent = 0. |
-| BR-11 | **Recording completeness** = (Present + Absent) / Expected x 100, where Expected = sessions x enrolled students. `N/A` when Expected = 0. |
-| BR-12 | **Unknown** = Expected - Present - Absent. Unknown is never counted as Absent. |
+| BR-10 | **Attendance rate** = (Present + Late) / (Present + Late + Absent) x 100, 2 decimals. **Excused is not in the rate.** Shown as `N/A` when Present + Late + Absent = 0 (for example, only Excused records). |
+| BR-11 | **Recording completeness** = (Present + Late + Excused + Absent) / Expected x 100, where Expected = the expected student-sessions (BR-15). `N/A` when Expected = 0. |
+| BR-12 | **Unknown** = Expected - Present - Late - Excused - Absent. Unknown is never counted as Absent. |
 | BR-13 | Every error message states what was wrong and what is expected. |
-| BR-14 | **Absence streak:** counted per student per course, over that course's sessions in date order (then session ID), using only sessions inside the current filters. Consecutive Absent records form a streak; Present ends it, and Unknown also ends it (Unknown is not an absence and does not join two absences). **Longest streak** = the longest run anywhere. **Current streak** = the run of Absent counted back from the student's most recent session in that course (0 if that session is not Absent). |
+| BR-14 | **Absence streak:** counted per student per course, over that course's sessions in date order (then session ID), using only sessions inside the current filters. Consecutive Absent records form a streak; Present, Late and Excused end it, and Unknown also ends it (Unknown is not an absence and does not join two absences). **Longest streak** = the longest run anywhere. **Current streak** = the run of Absent counted back from the student's most recent session in that course (0 if that session is not Absent). |
 | BR-15 | **Enrollment dates:** an enrollment has an optional `start_date` and `end_date` (`YYYY-MM-DD`). A student is **expected** at a session only if the session date is on or after `start_date` (when set) and on or before `end_date` (when set); both dates are included. NULL start = from the course's first session; NULL end = still enrolled. The end must not be before the start. Attendance can only be recorded for an expected session. |
 | BR-16 | **Course dates:** a course has an optional `start_date` and `end_date` (`YYYY-MM-DD`); NULL means no limit on that side. A session's date must be inside its course's period (both dates included). The end must not be before the start. Course dates do **not** change who is expected at a session (that is BR-15). |
 | BR-17 | **Enrollment inside course:** an enrollment's start must be on or before its end, and each set date must be inside the course period. A date equal to the course's start (or end) is stored as NULL, so the enrollment follows the course if the course dates change later. A course's dates cannot be changed so that an enrollment with its own dates falls outside them. Enforced in `validation.py` and `database.py`, not only in the date inputs. |
 
 **Worked example (use in a test and on a slide):** 7 Present, 2 Absent, 1 Unknown, so Attendance = 77.78% and Completeness = 90.00%.
+
+**Worked example with Late and Excused:** 6 Present, 1 Late, 1 Excused, 1 Absent, 1 Unknown, so Attendance = (6 + 1) / (6 + 1 + 1) = 87.50% and Completeness = 9 / 10 = 90.00%.
 
 ## 5. CSV import rules
 
@@ -114,25 +116,26 @@ session_id,course_code,session_date,student_id,full_name,status
 | FR-04 | Manage | Add a student (BR-01, BR-02): student ID and full name only. A repeated name shows a warning and needs confirmation (V1 rule). A new student starts with no course ("Not enrolled" in search). |
 | FR-05 | Manage | "Enroll a student in a course" is the only manual way to enroll: Student, Course, "Enrolled from" and "Enrolled until". The dates default to the chosen course's start and end and are limited to its period (BR-17); with no course period, there are no limits and "Enrolled from" defaults to today. |
 | FR-06 | Manage | Create a session for a course (BR-05, BR-06). |
-| FR-07 | Manage | Record attendance for a session: list every enrolled student with a Present/Absent choice, save all at once. |
+| FR-07 | Manage | Record attendance for a session: list every enrolled student with a Present/Late/Excused/Absent choice (blank = Unknown), save all at once. |
 | FR-08 | Manage | Correct attendance: re-open a session, change statuses, save. Unchanged rows are not rewritten. |
 | FR-09 | Manage | Search students by exact ID or by exact cleaned name (case-insensitive); show all matches with their courses. |
 | FR-10 | Import | Implement the import workflow in Section 5. |
 | FR-11 | Import | Offer a downloadable empty CSV template with the required columns. |
 | FR-12 | Dashboard | Filter by course (or All courses) and date range. Show the active filters. |
-| FR-13 | Dashboard | Show metrics: students, sessions, Present, Absent, Unknown, attendance rate, completeness. |
+| FR-13 | Dashboard | Show metrics: students, sessions, Present, Late, Excused, Absent, Unknown, attendance rate, completeness. |
 | FR-14 | Dashboard | Show one chart: attendance rate by session, in date order. |
 | FR-15 | Dashboard | List students below a chosen threshold (slider, default 75%), sorted by rate. |
-| FR-16 | Reports | A "Student" selector at the top defaults to "All students", which shows the overall Present, Absent, Unknown, rate and completeness, a per-student summary (Present, Absent, Unknown, rate, completeness), and the filtered attendance table (student, course, session, date, status). |
+| FR-16 | Reports | A "Student" selector at the top defaults to "All students", which shows the overall Present, Late, Excused, Absent, Unknown, rate and completeness, a per-student summary (the same five counts, rate, completeness), and the filtered attendance table (student, course, session, date, status). |
 | FR-17 | Reports | Download both tables as CSV. **Downloads match exactly what is on screen.** |
 | FR-18 | All | Show a clear message instead of an empty table or chart when there is no data. |
-| FR-19 | Reports | Single student report: choosing a student ("ID - Name") in the FR-16 selector replaces the All students view; using the course and date filters, show their Present, Absent, Unknown, attendance rate and completeness, a per-course breakdown when they are in more than one course, and their session history (session, course, date, status) in date order with missing records shown as Unknown. The history can be downloaded as CSV, matching the screen. |
-| FR-20 | Dashboard | Show a second chart below the FR-14 chart, "Recording status by session": one stacked bar per session with its Present (blue), Absent (orange) and Unknown (grey) counts, using the same filters, labels and session order as FR-14. Sessions with no records are included as all Unknown. Each bar's total equals the students enrolled in that session's course. |
+| FR-19 | Reports | Single student report: choosing a student ("ID - Name") in the FR-16 selector replaces the All students view; using the course and date filters, show their Present, Late, Excused, Absent, Unknown, attendance rate and completeness, a per-course breakdown when they are in more than one course, and their session history (session, course, date, status) in date order with missing records shown as Unknown. The history can be downloaded as CSV, matching the screen. |
+| FR-20 | Dashboard | Show a second chart below the FR-14 chart, "Recording status by session": one stacked bar per session with its Present (`#0072B2`), Late (`#56B4E9`), Excused (`#CC79A7`), Absent (`#E69F00`) and Unknown (`#999999`) counts, in that order, using the same filters, labels and session order as FR-14. Sessions with no records are included as all Unknown. Each bar's total equals the students enrolled in that session's course. |
 | FR-21 | Dashboard, Reports | **Absence alerts** (Dashboard, below the threshold list): a number input "Alert when current streak is at least" (default 2, minimum 1) lists every student and course whose current streak (BR-14) reaches it, with student ID, name, course, current streak, longest streak and date of last absence, highest current streak first. If nobody matches, a success message says so. In the Reports single-student view, the "By course" table (shown even for one course) adds the longest and current absence streak per course. |
 | FR-22 | Manage (Edit & Delete) | **Rename** a student's full name (BR-02 cleaning and validation, and the same-name warning with confirmation as in FR-04, ignoring the student's own name) or a course's name (BR-04). Student IDs and course codes never change. If the new value equals the old one, show "No change". |
 | FR-23 | Manage (Edit & Delete) | **Delete**, each in one database transaction that returns the counts removed: one attendance record (the student becomes Unknown for that session); an enrollment, with the student's records for that course's sessions; a student, with all their records and enrollments (the ID can be used again); a session, with its records; a course, only when it has no sessions and no enrolled students (otherwise an error says how many sessions and students must be removed first). Every delete first shows what will be removed, with counts, and the Delete button works only after ticking "I understand this cannot be undone". |
 | FR-24 | Manage, Import, Reports | **Enrollment dates (BR-15).** The Enroll form (FR-05) asks for "Enrolled from" and "Enrolled until" inside the course period (BR-17). Record Attendance lists only students expected at the session, and `record_attendance()` returns `outside_enrollment` without saving for a date outside the window. Edit & Delete has "Change enrollment dates" (only the student's courses, pre-filled with the current dates, a date not set shown as the course's, limited to the course period), refused (with the number of records affected) if saved attendance would fall outside the new dates. Import: a new enrollment starts at the student's earliest session date for that course in the accepted rows; for an existing enrollment, a row outside its dates is rejected (for example `Row 7: Student 004 is enrolled in PY101 from 2026-09-14, not on 2026-09-07.`). The Reports "By course" table shows "Enrolled from" and "Enrolled until" ("start" / "now" when not set). The seed data has no dates. |
 | FR-25 | Manage, Import, Dashboard, Reports | **Course dates (BR-16).** Create course asks for "Start date" and "End date" and refuses an end before the start. Create session refuses a date outside the period (`PY101 runs from 2026-09-07 to 2026-12-18. Choose a date in that period.`); import rejects such a row (`Row 7: PY101 runs from 2026-09-07 to 2026-12-18, not on 2027-01-05.`). Edit & Delete has "Change course dates", refused (with the number affected) if a session or an enrollment with its own dates (BR-17) would fall outside the new period. Every date input shows dates as `YYYY-MM-DD`. The Courses sub-tab lists every course with its period, and course labels show it (`PY101 - Programming with Python (2026-09-07 to 2026-12-18)`). When one course is chosen in the Dashboard/Reports filters, the date range starts as that course's period (or its session dates where the period is not set). The seed data runs PY101 2026-09-07 to 2026-12-18 and DS102 2026-09-09 to 2026-12-18. |
+| FR-26 | All | **Late and Excused statuses (BR-07, BR-10 to BR-12, BR-14).** Four saved statuses: Present, Late, Excused, Absent (Unknown is still never stored). Record Attendance, import, Dashboard metrics, the recording status chart and its filter, Reports and the student report all include Late and Excused. `create_tables()` upgrades an older attendance table (whose CHECK allows only Present and Absent) by creating a new table, copying every row, dropping the old table and renaming the new one, in one transaction. The seed data has no Late or Excused records. |
 
 ## 7. Non-functional requirements
 
@@ -181,7 +184,7 @@ attendance_v2/
 | T02 | `Jean-Paul`, `O’Neil` (to `O'Neil`) valid; `-Nadia`, `Jean--Paul`, `Jean - Paul`, 51 letters invalid | BR-02 |
 | T03 | `py101` becomes `PY101`; `1`, `123`, `PY 101` invalid | BR-03 |
 | T04 | `2026-09-15` valid; `2026-02-30`, `15/09/2026`, empty invalid | BR-06 |
-| T05 | `p`, `PRESENT`, ` a ` accepted; `late`, `x` rejected | BR-07 |
+| T05 | `p`, `PRESENT`, ` a `, `L`, `late`, `e`, `EXCUSED` accepted; `maybe`, `x` rejected | BR-07 |
 | T06 | 7 Present, 2 Absent, 1 Unknown gives 77.78% and 90.00% | BR-10, BR-11 |
 | T07 | 0 records gives `N/A`, no division error | BR-10, BR-11 |
 | T08 | CSV missing `status` column: whole file rejected, names the column | IR-01 |

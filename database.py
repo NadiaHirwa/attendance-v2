@@ -43,11 +43,23 @@ CREATE TABLE IF NOT EXISTS sessions (
 CREATE TABLE IF NOT EXISTS attendance (
     student_id  TEXT NOT NULL REFERENCES students,
     session_id  TEXT NOT NULL REFERENCES sessions,
-    status      TEXT NOT NULL CHECK (status IN ('Present', 'Absent')),
+    status      TEXT NOT NULL CHECK (status IN ('Present', 'Late', 'Excused', 'Absent')),
     source      TEXT NOT NULL,
     recorded_at TEXT NOT NULL,
     PRIMARY KEY (student_id, session_id)
 );
+"""
+
+# Used only to upgrade an older attendance table whose CHECK allows two statuses (FR-26).
+NEW_ATTENDANCE_TABLE = """
+CREATE TABLE attendance_new (
+    student_id  TEXT NOT NULL REFERENCES students,
+    session_id  TEXT NOT NULL REFERENCES sessions,
+    status      TEXT NOT NULL CHECK (status IN ('Present', 'Late', 'Excused', 'Absent')),
+    source      TEXT NOT NULL,
+    recorded_at TEXT NOT NULL,
+    PRIMARY KEY (student_id, session_id)
+)
 """
 
 
@@ -67,6 +79,37 @@ def create_tables(connection):
     add_course_date_columns(connection)
     add_enrollment_date_columns(connection)
     connection.commit()
+    upgrade_attendance_statuses(connection)
+
+
+def upgrade_attendance_statuses(connection):
+    """Allow Late and Excused in an older attendance table, keeping every row (FR-26).
+
+    SQLite cannot change a CHECK rule with ALTER TABLE, so the table is rebuilt:
+    create a new table, copy the rows, drop the old table, rename the new one.
+    All four steps run in one transaction: if one fails, nothing changes.
+    """
+    row = connection.execute(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'attendance'"
+    ).fetchone()
+    if "'Late'" in row[0]:
+        return  # Already the new table.
+
+    try:
+        connection.execute("BEGIN")
+        connection.execute(NEW_ATTENDANCE_TABLE)
+        connection.execute(
+            """
+            INSERT INTO attendance_new (student_id, session_id, status, source, recorded_at)
+            SELECT student_id, session_id, status, source, recorded_at FROM attendance
+            """
+        )
+        connection.execute("DROP TABLE attendance")
+        connection.execute("ALTER TABLE attendance_new RENAME TO attendance")
+        connection.commit()
+    except sqlite3.Error:
+        connection.rollback()
+        raise
 
 
 def add_course_date_columns(connection):

@@ -31,7 +31,9 @@ SESSION_ID_ERROR = (
     "(for example PY101-W1)."
 )
 DATE_ERROR = "Invalid date. Expected a real date in YYYY-MM-DD format (for example 2026-09-15)."
-STATUS_ERROR = "Invalid status. Expected P, A, Present or Absent."
+STATUS_ERROR = (
+    "Invalid status. Expected P, L, E, A, Present, Late, Excused or Absent."
+)
 
 # Messages for values that are valid but already used. {} is filled in with the value.
 COURSE_EXISTS_ERROR = "Course {} already exists. Enter a different course code."
@@ -313,11 +315,17 @@ def describe_course_period(start_date, end_date):
 
 
 def normalize_status(status):
-    """Return 'Present' or 'Absent', or None if the status is not accepted (BR-07)."""
+    """Return 'Present', 'Late', 'Excused' or 'Absent', or None if not accepted (BR-07)."""
     status = status.strip().lower()
 
     if status in ("p", "present"):
         return "Present"
+
+    if status in ("l", "late"):
+        return "Late"
+
+    if status in ("e", "excused"):
+        return "Excused"
 
     if status in ("a", "absent"):
         return "Absent"
