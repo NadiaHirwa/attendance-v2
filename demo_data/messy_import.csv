@@ -1,20 +1,20 @@
 Course_Code,Date,Student_ID,Full_Name,Status,Type,Notes
-  PY101 ,16/09/2026,3,Grace O’Neil,p,,auto-fixes: spaces; ID 3 -> 003; curly apostrophe; p -> Present
-ds102,24/9/2026,08,Kevin  Ndayishimiye,L,tut,auto-fixes: capitals; D/M/YYYY date; ID 08 -> 008; double space; L -> Late; tut -> Tutorial
-MA103,2026-09-25,007,Diane Mukamana,excused,CLASS,auto-fixes: YYYY-MM-DD date -> DD/MM/YYYY; full word in lowercase; type capitals
-PY101,2026-09-19,011,Claudine Umutoni,E,Tutorial,auto-fix: E -> Excused (fills a missing tutorial record)
-PY101,2026-09-07,0,Zero Id,P,,rejected: ID 0 is not padded
-PY101,2026-09-07,001,Nadia Hirwa,maybe,,rejected: bad status
-BIO200,2026-09-07,009,Sandrine Ingabire,P,,rejected: unknown course
-PY101,12/09/2026,001,Nadia Hirwa,P,,rejected: class row on a Saturday
-DS102,16/09/2026,001,Nadia Hirwa,P,,rejected: class row on the DS102 removed holiday
-PY101,2026-10-02,001,Nadia Hirwa,P,,rejected: after the course ends
-MA103,2026-09-19,004,eric niyonzimma,P,Tutorial,S1: saved ID with a similar name (new Saturday tutorial)
-PY101,2026-09-21,011,Fabrice Gasana,absent,,S2: saved ID with a different name -> next free ID 013
-PY101,2026-09-22,011,Fabrice Gasana,P,,S2: same pair -> the same ID 013
-MA103,2026-09-21,014,Alice Uwimana,P,,new student: accepted and enrolled from this date
-MA103,2026-09-22,014,Alice Kayitesi,P,,S3: same new ID with another name -> next free ID 015
-PY101,2026-09-08,002,Jean-Paul Mugisha,P,,S4: saved as Absent
-PY101,2026-09-07,001,Nadia Hirwa,Present,,duplicate of a saved record
-PY101,16/09/2026,003,Grace O'Neil,Present,,duplicate of row 2
-MA103,19/09/2026,005,Aline Uwase,a,tutorial,auto-fixes: a -> Absent; type capitals (shares the new tutorial with row 12)
+  PY101 ,09/09/2026,3,Grace O’Neil,p,,auto-fixes: spaces; ID 3 -> 003; curly apostrophe; p -> Present
+ds102,17/9/2026,08,Kevin  Ndayishimiye,L,tut,auto-fixes: capitals; D/M/YYYY date; ID 08 -> 008; double space; L -> Late; tut -> Tutorial
+MA103,2026-09-18,007,Diane Mukamana,excused,CLASS,auto-fixes: YYYY-MM-DD date -> DD/MM/YYYY; full word in lowercase; type capitals
+PY101,2026-09-12,011,Claudine Umutoni,E,Tutorial,auto-fix: E -> Excused (fills a missing tutorial record)
+PY101,2026-08-31,0,Zero Id,P,,rejected: ID 0 is not padded
+PY101,2026-08-31,001,Nadia Hirwa,maybe,,rejected: bad status
+BIO200,2026-08-31,009,Sandrine Ingabire,P,,rejected: unknown course
+PY101,05/09/2026,001,Nadia Hirwa,P,,rejected: class row on a Saturday
+DS102,09/09/2026,001,Nadia Hirwa,P,,rejected: class row on the DS102 removed holiday
+PY101,2026-09-25,001,Nadia Hirwa,P,,rejected: after the course ends
+MA103,2026-09-12,004,eric niyonzimma,P,Tutorial,S1: saved ID with a similar name (new Saturday tutorial)
+PY101,2026-09-14,011,Fabrice Gasana,absent,,S2: saved ID with a different name -> next free ID 013
+PY101,2026-09-15,011,Fabrice Gasana,P,,S2: same pair -> the same ID 013
+MA103,2026-09-14,014,Alice Uwimana,P,,new student: accepted and enrolled from this date
+MA103,2026-09-15,014,Alice Kayitesi,P,,S3: same new ID with another name -> next free ID 015
+PY101,2026-09-01,002,Jean-Paul Mugisha,P,,S4: saved as Absent
+PY101,2026-08-31,001,Nadia Hirwa,Present,,duplicate of a saved record
+PY101,09/09/2026,003,Grace O'Neil,Present,,duplicate of row 2
+MA103,12/09/2026,005,Aline Uwase,a,tutorial,auto-fixes: a -> Absent; type capitals (shares the new tutorial with row 12)

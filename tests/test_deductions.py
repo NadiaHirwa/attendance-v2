@@ -2,7 +2,7 @@
 
 Every test uses a temporary in-memory database, never attendance.db.
 Seed facts used below (seed_demo.py): 002 in PY101 has 2 Late and 5 Absent;
-001's only Late is at the PY101 tutorial on 10/09; 008's DS102 tutorial on 24/09
+001's only Late is at the PY101 tutorial on 03/09; 008's DS102 tutorial on 17/09
 is not recorded.
 """
 
@@ -174,7 +174,7 @@ class TestDeductionsOnSeed(SeedTestCase):
         self.assertEqual(self.deduction_of(table, "002", "PY101"), 12)
 
     def test_tutorials_count(self):
-        """BR-21, BR-22: 001's only Late is at the PY101 tutorial on 10/09, so 1 mark."""
+        """BR-21, BR-22: 001's only Late is at the PY101 tutorial on 03/09, so 1 mark."""
         table = analytics.build_deductions_table(self.records(), 1, 2)
 
         self.assertEqual(self.deduction_of(table, "001", "PY101"), 1)

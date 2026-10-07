@@ -33,7 +33,7 @@ does not need to be activated.
 ```
 
 This deletes `attendance.db` and recreates it with the Version 3 demo data: block B1-2627
-(07/09/2026 to 25/09/2026), 3 courses with a class every weekday (one holiday in DS102) and
+(31/08/2026 to 18/09/2026), 3 courses with a class every weekday (one holiday in DS102) and
 2 tutorials each, and 12 students, including a late joiner and an early leaver.
 Expected totals: 477 Present, 10 Late, 4 Excused, 10 Absent, 4 Unknown (505 expected),
 attendance rate 97.99%, completeness 99.21%. The script also prints the deductions per

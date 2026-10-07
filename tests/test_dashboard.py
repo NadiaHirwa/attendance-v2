@@ -15,7 +15,7 @@ import seed_demo
 
 TEST_DB_PATH = ":memory:"
 APP_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "app.py")
-# A generated session ID, like 'PY101-2026-09-07' or 'MA103-2026-09-23-T2'.
+# A generated session ID, like 'PY101-2026-08-31' or 'MA103-2026-09-16-T2'.
 SESSION_ID_PATTERN = re.compile(r"[A-Z]{2,}\d*-\d{4}-\d{2}-\d{2}")
 
 
@@ -112,13 +112,13 @@ class TestDrillDownRates(SeedTestCase):
 
     def test_rate_per_block(self):
         """With a second block, All blocks shows one bar per block. B2-2627 starts on
-        28/09/2026 with PY201; 001 is enrolled and Present on 28/09 only, so B2-2627 has
+        21/09/2026 with PY201; 001 is enrolled and Present on 21/09 only, so B2-2627 has
         1 Present and 14 Unknown: 1 / 1 = 100.00%. B1-2627 keeps the seed totals:
         (477 + 10) / (477 + 10 + 10) = 487 / 497 = 97.99%."""
-        database.add_block(self.connection, "B2-2627", "Block 2, 2026-27", "2026-09-28")
+        database.add_block(self.connection, "B2-2627", "Block 2, 2026-27", "2026-09-21")
         database.create_course(self.connection, "PY201", "Python 2", "B2-2627")
         database.enroll_student(self.connection, "001", "PY201")
-        database.record_attendance(self.connection, "001", "PY201-2026-09-28", "Present")
+        database.record_attendance(self.connection, "001", "PY201-2026-09-21", "Present")
         records = analytics.build_records_frame(database.get_expected_records(self.connection))
 
         level, summary = analytics.build_drilldown_chart_data(
@@ -153,23 +153,23 @@ class TestDrillDownRates(SeedTestCase):
     def test_rate_per_week(self):
         """Stage 7: PY101 by week, by hand from the seed.
 
-        Week 1 (07/09-11/09): 5 class days + tutorial 10/09, 11 students (010 joins on
-        14/09) = 66: 63 P, 2 L, 1 A (002 on 08/09): 65 / 66 = 98.48%.
-        Week 2 (14/09-18/09): 5 class days for 12 students + Saturday tutorial 19/09 for
-        11 (012 left on 18/09) = 71: 64 P, 3 L, 1 E, 1 A, 2 Unknown (003 on 16/09, 011 at
+        Week 1 (31/08-04/09): 5 class days + tutorial 03/09, 11 students (010 joins on
+        07/09) = 66: 63 P, 2 L, 1 A (002 on 01/09): 65 / 66 = 98.48%.
+        Week 2 (07/09-11/09): 5 class days for 12 students + Saturday tutorial 12/09 for
+        11 (012 left on 11/09) = 71: 64 P, 3 L, 1 E, 1 A, 2 Unknown (003 on 09/09, 011 at
         the tutorial): 67 / 68 = 98.53%. The weekend tutorial belongs to the week before.
-        Week 3 (21/09-25/09): 5 class days, 11 students = 55: 50 P, 5 A (002 on 21-23/09,
-        009 on 24-25/09): 50 / 55 = 90.91%.
+        Week 3 (14/09-18/09): 5 class days, 11 students = 55: 50 P, 5 A (002 on 14-16/09,
+        009 on 17-18/09): 50 / 55 = 90.91%.
         """
         level, summary = analytics.build_drilldown_chart_data(
-            self.course("PY101"), "B1-2627", "PY101", period_start="2026-09-07"
+            self.course("PY101"), "B1-2627", "PY101", period_start="2026-08-31"
         )
 
         self.assertEqual(level, analytics.LEVEL_WEEK)
         self.assertEqual(self.rates_by_label(summary), {
-            "Week 1 (07/09–11/09)": 98.48,
-            "Week 2 (14/09–18/09)": 98.53,
-            "Week 3 (21/09–25/09)": 90.91,
+            "Week 1 (31/08–04/09)": 98.48,
+            "Week 2 (07/09–11/09)": 98.53,
+            "Week 3 (14/09–18/09)": 90.91,
         })
         expected = []
         for index, row in summary.iterrows():
@@ -181,7 +181,7 @@ class TestDrillDownRates(SeedTestCase):
 
     def test_rate_per_day(self):
         """Stage 7: "Show by day" gives one bar per date: PY101 has 15 class days and the
-        Saturday tutorial; the tutorial on Thursday 10/09 shares that day's bar."""
+        Saturday tutorial; the tutorial on Thursday 03/09 shares that day's bar."""
         level, summary = analytics.build_drilldown_chart_data(
             self.course("PY101"), "B1-2627", "PY101", by_day=True
         )
@@ -189,29 +189,29 @@ class TestDrillDownRates(SeedTestCase):
         self.assertEqual(level, analytics.LEVEL_DAY)
         labels = list(summary[analytics.CHART_LABEL_COLUMN])
         self.assertEqual(len(labels), 16)
-        self.assertEqual(labels[0], "Mon 07/09")
-        self.assertIn("Sat 19/09", labels)
-        # 002 was Absent on 21, 22 and 23/09: 10 of 11 attended each day.
-        self.assertEqual(self.rates_by_label(summary)["Mon 21/09"], 90.91)
+        self.assertEqual(labels[0], "Mon 31/08")
+        self.assertIn("Sat 12/09", labels)
+        # 002 was Absent on 21, 22 and 16/09: 10 of 11 attended each day.
+        self.assertEqual(self.rates_by_label(summary)["Mon 14/09"], 90.91)
 
 
 class TestWeeks(unittest.TestCase):
 
     def test_block_weeks(self):
         """Stage 7: the Week box of B1-2627 lists three weeks, Monday to Friday in the label."""
-        weeks = analytics.build_week_options("2026-09-07", "2026-09-25")
+        weeks = analytics.build_week_options("2026-08-31", "2026-09-18")
 
         labels = []
         for week in weeks:
             labels.append(week["label"])
-        self.assertEqual(labels, ["Week 1 (07/09–11/09)", "Week 2 (14/09–18/09)",
-                                  "Week 3 (21/09–25/09)"])
+        self.assertEqual(labels, ["Week 1 (31/08–04/09)", "Week 2 (07/09–11/09)",
+                                  "Week 3 (14/09–18/09)"])
 
     def test_weekend_belongs_to_the_week_before(self):
-        """Stage 7: a week runs Monday to Sunday, so Saturday 19/09 is in week 2."""
-        week_2 = analytics.build_week_options("2026-09-07", "2026-09-25")[1]
+        """Stage 7: a week runs Monday to Sunday, so Saturday 12/09 is in week 2."""
+        week_2 = analytics.build_week_options("2026-08-31", "2026-09-18")[1]
 
-        self.assertEqual((week_2["start"], week_2["end"]), ("2026-09-14", "2026-09-20"))
+        self.assertEqual((week_2["start"], week_2["end"]), ("2026-09-07", "2026-09-13"))
 
 
 class TestKpiCards(SeedTestCase):
@@ -291,9 +291,9 @@ class TestNoSessionIds(SeedTestCase):
 
     def test_type_names_the_tutorial(self):
         """Stage 7: the Type column says 'Class' or 'Tutorial T2' instead of the ID."""
-        self.assertEqual(analytics.describe_session_type("PY101-2026-09-07", "Class"), "Class")
+        self.assertEqual(analytics.describe_session_type("PY101-2026-08-31", "Class"), "Class")
         self.assertEqual(
-            analytics.describe_session_type("MA103-2026-09-23-T2", "Tutorial"), "Tutorial T2"
+            analytics.describe_session_type("MA103-2026-09-16-T2", "Tutorial"), "Tutorial T2"
         )
         report = analytics.build_attendance_report(self.course("MA103"))
         self.assertEqual(

@@ -2,9 +2,9 @@
 
 Every test uses a temporary in-memory database, never attendance.db.
 The numbers were worked out by hand from the lists in seed_demo.py:
-block 07/09/2026 to 25/09/2026 (15 weekdays); DS102 loses 16/09 as a holiday;
-tutorials PY101 10/09 and 19/09, DS102 11/09 and 24/09, MA103 23/09 (T1 and T2);
-010 joins on 14/09 and 012 leaves after 18/09.
+block 31/08/2026 to 18/09/2026 (15 weekdays); DS102 loses 09/09 as a holiday;
+tutorials PY101 03/09 and 12/09, DS102 04/09 and 17/09, MA103 16/09 (T1 and T2);
+010 joins on 07/09 and 012 leaves after 11/09.
 """
 
 import os
@@ -75,7 +75,7 @@ class TestSeedTotals(SeedV3TestCase):
         self.assertEqual(totals["sessions"], 50)
 
     def test_class_days_holiday_and_tutorials(self):
-        """BR-20, BR-21: 15 class days per course (DS102 14: holiday 16/09), 2 tutorials each."""
+        """BR-20, BR-21: 15 class days per course (DS102 14: holiday 09/09), 2 tutorials each."""
         expected_counts = {"PY101": (15, 2), "DS102": (14, 2), "MA103": (15, 2)}
 
         for course_code in expected_counts:
@@ -88,8 +88,8 @@ class TestSeedTotals(SeedV3TestCase):
                     tutorials += 1
             self.assertEqual((class_days, tutorials), expected_counts[course_code], course_code)
 
-        self.assertIsNone(database.get_class_session(self.connection, "DS102", "2026-09-16"))
-        self.assertIsNotNone(database.get_session(self.connection, "MA103-2026-09-23-T2"))
+        self.assertIsNone(database.get_class_session(self.connection, "DS102", "2026-09-09"))
+        self.assertIsNotNone(database.get_session(self.connection, "MA103-2026-09-16-T2"))
 
     def test_database_with_courses_is_not_seeded_again(self):
         """A database that already has courses is left alone."""
@@ -101,7 +101,7 @@ class TestSeedTotals(SeedV3TestCase):
     def test_reset_restores_the_demo_data(self):
         """After changes, 'Reset demo data' brings back exactly the demo totals."""
         database.add_student(self.connection, "013", "Emile Uwase")
-        database.delete_session(self.connection, "PY101-2026-09-07")
+        database.delete_session(self.connection, "PY101-2026-08-31")
 
         seed_demo.reset_demo_data(self.connection)
 
@@ -115,9 +115,9 @@ class TestTwoStudentsByHand(SeedV3TestCase):
     def test_student_002_in_py101(self):
         """Section 12, by hand: 002 in PY101 has 17 sessions (15 class days, 2 tutorials).
 
-        Absent 08/09, 15/09, 21/09, 22/09, 23/09 (5); Late 09/09, 17/09 (2); the other 10 Present.
+        Absent 01/09, 08/09, 14/09, 15/09, 16/09 (5); Late 02/09, 10/09 (2); the other 10 Present.
         Rate (10 + 2) / (10 + 2 + 5) = 12 / 17 = 70.59%. Deducted 2 x 1 + 5 x 2 = 12.
-        Longest streak 3 (21-23/09); current streak 0 (25/09 is Present).
+        Longest streak 3 (14-16/09); current streak 0 (18/09 is Present).
         """
         records = self.student_course("002", "PY101")
         rates = analytics.summarize_frame(records)
@@ -134,11 +134,11 @@ class TestTwoStudentsByHand(SeedV3TestCase):
         self.assertEqual(analytics.calculate_streaks(statuses), (3, 0))
 
     def test_late_joiner_010(self):
-        """Section 12, by hand: 010 joins on 14/09, so is expected only from week 2.
+        """Section 12, by hand: 010 joins on 07/09, so is expected only from week 2.
 
-        PY101: 10 class days + tutorial 19/09 = 11. DS102: 10 weekdays minus the holiday
-        16/09 = 9 class days + tutorial 24/09 = 10. MA103: 10 class days + 2 tutorials on
-        23/09 = 12. Only one record is not Present: Absent in DS102 on 14/09.
+        PY101: 10 class days + tutorial 12/09 = 11. DS102: 10 weekdays minus the holiday
+        09/09 = 9 class days + tutorial 17/09 = 10. MA103: 10 class days + 2 tutorials on
+        16/09 = 12. Only one record is not Present: Absent in DS102 on 07/09.
         Total 33: 32 Present, 1 Absent, rate 32 / 33 = 96.97%, DS102 deducted 2.
         """
         expected = {"PY101": 11, "DS102": 10, "MA103": 12}
@@ -157,7 +157,7 @@ class TestTwoStudentsByHand(SeedV3TestCase):
         self.assertEqual(row[analytics.DEDUCTED_COLUMN], 2)
 
     def test_absence_alert_at_default(self):
-        """FR-21: at the default of 2, only 009 in PY101 is listed (absent on 24/09 and 25/09)."""
+        """FR-21: at the default of 2, only 009 in PY101 is listed (absent on 17/09 and 18/09)."""
         alerts = analytics.find_streak_alerts(
             analytics.build_streak_table(self.records()), analytics.DEFAULT_STREAK_ALERT
         )
@@ -170,7 +170,7 @@ class TestManageOnSeed(SeedV3TestCase):
 
     def test_delete_course_counts_ma103(self):
         """FR-23 (Version 3 rule), by hand: MA103 has 15 class days, 2 tutorials and
-        10 enrollments; its 165 expected records minus 1 Unknown (007 on 25/09) = 164."""
+        10 enrollments; its 165 expected records minus 1 Unknown (007 on 18/09) = 164."""
         preview = database.count_delete_course(self.connection, "MA103")
         counts = database.delete_course(self.connection, "MA103")
 
@@ -182,9 +182,9 @@ class TestManageOnSeed(SeedV3TestCase):
         self.assertEqual(analytics.calculate_dashboard_metrics(self.records())["expected"], 340)
 
     def test_remove_holiday_preview(self):
-        """Section 11: removing PY101's class on 16/09 deletes 11 records (12 students
+        """Section 11: removing PY101's class on 09/09 deletes 11 records (12 students
         enrolled, 003 has no record that day)."""
-        counts = database.count_delete_session(self.connection, "PY101-2026-09-16")
+        counts = database.count_delete_session(self.connection, "PY101-2026-09-09")
 
         self.assertEqual(counts["attendance"], 11)
 
@@ -241,10 +241,10 @@ class TestDemoFiles(SeedV3TestCase):
                       'Got "0".', reasons)
         self.assertIn('Got "maybe"', reasons)
         self.assertIn('Row 8: Unknown course "BIO200".', reasons)
-        self.assertIn("Row 9: PY101 has no class on Saturday 12/09/2026.", reasons)
-        self.assertIn("Row 10: DS102 has no class on Wednesday 16/09/2026 (class day removed).",
+        self.assertIn("Row 9: PY101 has no class on Saturday 05/09/2026.", reasons)
+        self.assertIn("Row 10: DS102 has no class on Wednesday 09/09/2026 (class day removed).",
                       reasons)
-        self.assertIn("Row 11: PY101 runs from 07/09/2026 to 25/09/2026, not on 02/10/2026.",
+        self.assertIn("Row 11: PY101 runs from 31/08/2026 to 18/09/2026, not on 25/09/2026.",
                       reasons)
         self.assertIn('Suggestion: "Use saved name Eric Niyonzima"', reasons)
         self.assertIn('Suggestion: "Assign next free ID 013 as a new student"', reasons)
@@ -266,21 +266,21 @@ class TestDemoFiles(SeedV3TestCase):
         self.assertEqual(new_ids[16], ("015", "Alice Kayitesi"))
 
     def test_messy_file_shares_one_new_tutorial(self):
-        """IR-13: rows 12 and 20 share the new MA103 Saturday tutorial MA103-2026-09-19-T1."""
+        """IR-13: rows 12 and 20 share the new MA103 Saturday tutorial MA103-2026-09-12-T1."""
         result = self.review_messy_file(accept_all=True)
 
         tutorial_ids = []
         for row in result["accepted"]:
             if row["type"] == "Tutorial" and row["course_code"] == "MA103":
                 tutorial_ids.append(row["session_id"])
-        self.assertEqual(tutorial_ids, ["MA103-2026-09-19-T1", "MA103-2026-09-19-T1"])
+        self.assertEqual(tutorial_ids, ["MA103-2026-09-12-T1", "MA103-2026-09-12-T1"])
 
     def test_messy_file_totals_before_suggestions(self):
         """FR-31: Confirm with no suggestions accepted; totals by hand.
 
-        Fills 003 PY101 16/09 (P), 008 DS102 24/09 T1 (L), 007 MA103 25/09 (E) and
-        011 PY101 19/09 T1 (E). New 014 in MA103 from 21/09: 7 expected, 1 Present.
-        New MA103 tutorial 19/09: 10 expected, 005 Absent.
+        Fills 003 PY101 09/09 (P), 008 DS102 17/09 T1 (L), 007 MA103 18/09 (E) and
+        011 PY101 12/09 T1 (E). New 014 in MA103 from 14/09: 7 expected, 1 Present.
+        New MA103 tutorial 12/09: 10 expected, 005 Absent.
         Present 479, Late 11, Excused 6, Absent 11, Unknown 4 - 4 + 6 + 9 = 15;
         expected 505 + 7 + 10 = 522. Rate 490 / 501 = 97.80%; completeness 507 / 522 = 97.13%.
         """
@@ -292,10 +292,10 @@ class TestDemoFiles(SeedV3TestCase):
     def test_messy_file_totals_after_all_suggestions(self):
         """FR-31: Confirm with every suggestion accepted; totals by hand.
 
-        Adds 004's MA103 tutorial (P), new 013 in PY101 from 21/09 (5 expected: A, P),
-        new 015 in MA103 from 22/09 (6 expected: P), and 002's 08/09 Absent becomes Present.
-        S5 (Stage 7) adds two tutorials for 001 (Present): PY101 Saturday 12/09 (11 expected:
-        010 joins on 14/09) and DS102 on the 16/09 holiday (10 expected).
+        Adds 004's MA103 tutorial (P), new 013 in PY101 from 14/09 (5 expected: A, P),
+        new 015 in MA103 from 15/09 (6 expected: P), and 002's 01/09 Absent becomes Present.
+        S5 (Stage 7) adds two tutorials for 001 (Present): PY101 Saturday 05/09 (11 expected:
+        010 joins on 07/09) and DS102 on the 09/09 holiday (10 expected).
         Present 479 + 4 + 2 = 485, Late 11, Excused 6, Absent 11,
         Unknown 15 - 1 + 3 + 5 + 10 + 9 = 41; expected 522 + 5 + 6 + 11 + 10 = 554.
         Rate 496 / 507 = 97.83%; completeness 513 / 554 = 92.60%.
@@ -306,7 +306,7 @@ class TestDemoFiles(SeedV3TestCase):
         self.assert_totals((485, 11, 6, 11, 41), 554, "97.83%", "92.60%")
         row = self.connection.execute(
             "SELECT status, source FROM attendance WHERE student_id = ? AND session_id = ?",
-            ("002", "PY101-2026-09-08"),
+            ("002", "PY101-2026-09-01"),
         ).fetchone()
         self.assertEqual((row["status"], row["source"]), ("Present", "messy_import.csv"))
 
@@ -325,8 +325,8 @@ class TestDemoFiles(SeedV3TestCase):
     def test_clean_file_totals(self):
         """FR-10: clean_import.csv gives 7 accepted; totals after Confirm, by hand.
 
-        It fills 011's PY101 tutorial on 19/09 (Present) and 007's MA103 class on 25/09
-        (Excused), and adds 013 in PY101 from 21/09 (5 class days: 4 Present, 1 Late).
+        It fills 011's PY101 tutorial on 12/09 (Present) and 007's MA103 class on 18/09
+        (Excused), and adds 013 in PY101 from 14/09 (5 class days: 4 Present, 1 Late).
         Present 477 + 1 + 4 = 482; Late 11; Excused 5; Absent 10; Unknown 4 - 2 = 2;
         expected 505 + 5 = 510. Rate 493 / 503 = 98.01%; completeness 508 / 510 = 99.61%.
         """

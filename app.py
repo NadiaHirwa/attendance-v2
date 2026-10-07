@@ -312,6 +312,61 @@ def show_block_list(connection):
     st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
 
 
+def show_edit_block(connection):
+    """Change a block's name or start date; its courses and class days move with it."""
+    st.subheader("Edit a block")
+
+    block_choices = get_block_choices(connection)
+    if not block_choices:
+        st.info(NO_BLOCKS_MESSAGE)
+        return
+
+    block_label = st.selectbox("Block", list(block_choices), key="edit_block")
+    block_id = block_choices[block_label]
+    block = database.get_block(connection, block_id)
+
+    with st.form(f"edit_block_form_{block_id}"):
+        name_text = st.text_input("Block name", value=block["block_name"])
+        start = st.date_input(
+            "Start date (a Monday)", value=to_date_or_none(block["start_date"]),
+            format=DATE_INPUT_FORMAT,
+        )
+        st.caption(
+            "The end date (Friday of week 3) is calculated. The block's courses move with "
+            "it and their class days are regenerated; a removed holiday stays removed if its "
+            "date is still in the block. Refused if saved attendance or an enrollment's "
+            "dates would fall outside."
+        )
+        submitted = st.form_submit_button("Save block")
+
+    if not submitted:
+        return
+
+    block_name = validation.clean_course_name(name_text)
+    start_date = to_text_or_none(start)
+    if block_name is None:
+        st.error(validation.BLOCK_NAME_ERROR)
+        return
+    if start_date is None:
+        st.error(validation.DATE_ERROR)
+        return
+    if block_name == block["block_name"] and start_date == block["start_date"]:
+        st.info(validation.NO_CHANGE_MESSAGE.format("name and start date"))
+        return
+
+    try:
+        result = database.change_block(connection, block_id, block_name, start_date)
+    except ValueError as error:
+        st.error(str(error))
+        return
+
+    finish_edit(
+        f"Block {block_id} ({block_name}) now runs "
+        f"{validation.describe_course_period(start_date, result['end_date'])}: "
+        f"{result['added']} class day(s) added, {result['removed']} session(s) removed."
+    )
+
+
 def show_delete_block(connection):
     """Delete a block, only when it has no courses (Section 6.1)."""
     st.subheader("Delete a block")
@@ -2257,6 +2312,8 @@ def show_manage_tab(connection):
         show_course_list(connection)
         st.divider()
         show_course_details(connection)
+        st.divider()
+        show_edit_block(connection)
         st.divider()
         show_delete_block(connection)
 

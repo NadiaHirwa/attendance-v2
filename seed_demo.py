@@ -15,7 +15,7 @@ import validation
 
 BLOCK_ID = "B1-2627"
 BLOCK_NAME = "Block 1, 2026-27"
-BLOCK_START = "2026-09-07"  # a Monday; the block ends on Friday 2026-09-25
+BLOCK_START = "2026-08-31"  # a Monday; the block ends on Friday 2026-09-18
 
 COURSES = [
     ("PY101", "Programming with Python"),
@@ -47,58 +47,58 @@ ENROLLMENTS = {
 }
 
 # 010 joins late (from week 2) and 012 leaves early (after week 2), in all their courses.
-LATE_JOINER = ("010", "2026-09-14")
-EARLY_LEAVER = ("012", "2026-09-18")
+LATE_JOINER = ("010", "2026-09-07")
+EARLY_LEAVER = ("012", "2026-09-11")
 
 # Class days removed as holidays (course, date).
-HOLIDAYS = [("DS102", "2026-09-16")]
+HOLIDAYS = [("DS102", "2026-09-09")]
 
 # Tutorials (course, date). PY101 has one on a Saturday; MA103 has two on one date (T1, T2).
 TUTORIALS = [
-    ("PY101", "2026-09-10"),
-    ("PY101", "2026-09-19"),
-    ("DS102", "2026-09-11"),
-    ("DS102", "2026-09-24"),
-    ("MA103", "2026-09-23"),
-    ("MA103", "2026-09-23"),
+    ("PY101", "2026-09-03"),
+    ("PY101", "2026-09-12"),
+    ("DS102", "2026-09-04"),
+    ("DS102", "2026-09-17"),
+    ("MA103", "2026-09-16"),
+    ("MA103", "2026-09-16"),
 ]
 
 # Every record that is not Present: (student_id, session_id) -> status.
 STATUSES = {
     # 002 in PY101: 5 Absent (3 in a row) and 2 Late, so 2 x 1 + 5 x 2 = 12 marks deducted.
+    ("002", "PY101-2026-09-01"): "Absent",
+    ("002", "PY101-2026-09-02"): "Late",
     ("002", "PY101-2026-09-08"): "Absent",
-    ("002", "PY101-2026-09-09"): "Late",
+    ("002", "PY101-2026-09-10"): "Late",
+    ("002", "PY101-2026-09-14"): "Absent",
     ("002", "PY101-2026-09-15"): "Absent",
-    ("002", "PY101-2026-09-17"): "Late",
-    ("002", "PY101-2026-09-21"): "Absent",
-    ("002", "PY101-2026-09-22"): "Absent",
-    ("002", "PY101-2026-09-23"): "Absent",
-    ("001", "PY101-2026-09-10-T1"): "Late",
-    ("008", "PY101-2026-09-14"): "Excused",
+    ("002", "PY101-2026-09-16"): "Absent",
+    ("001", "PY101-2026-09-03-T1"): "Late",
+    ("008", "PY101-2026-09-07"): "Excused",
     # 009 in PY101: absent on the last two days, so a current streak of 2.
-    ("009", "PY101-2026-09-18"): "Late",
-    ("009", "PY101-2026-09-24"): "Absent",
-    ("009", "PY101-2026-09-25"): "Absent",
-    ("012", "PY101-2026-09-18"): "Late",
+    ("009", "PY101-2026-09-11"): "Late",
+    ("009", "PY101-2026-09-17"): "Absent",
+    ("009", "PY101-2026-09-18"): "Absent",
+    ("012", "PY101-2026-09-11"): "Late",
+    ("006", "DS102-2026-08-31"): "Late",
+    ("006", "DS102-2026-09-03"): "Excused",
     ("006", "DS102-2026-09-07"): "Late",
-    ("006", "DS102-2026-09-10"): "Excused",
     ("006", "DS102-2026-09-14"): "Late",
-    ("006", "DS102-2026-09-21"): "Late",
-    ("010", "DS102-2026-09-14"): "Absent",
-    ("011", "DS102-2026-09-08"): "Late",
-    ("011", "DS102-2026-09-11-T1"): "Absent",
-    ("004", "MA103-2026-09-07"): "Late",
-    ("005", "MA103-2026-09-11"): "Absent",
-    ("005", "MA103-2026-09-23-T1"): "Excused",
-    ("005", "MA103-2026-09-23-T2"): "Excused",
+    ("010", "DS102-2026-09-07"): "Absent",
+    ("011", "DS102-2026-09-01"): "Late",
+    ("011", "DS102-2026-09-04-T1"): "Absent",
+    ("004", "MA103-2026-08-31"): "Late",
+    ("005", "MA103-2026-09-04"): "Absent",
+    ("005", "MA103-2026-09-16-T1"): "Excused",
+    ("005", "MA103-2026-09-16-T2"): "Excused",
 }
 
 # Records deliberately left out, so they show as Unknown.
 MISSING = [
-    ("003", "PY101-2026-09-16"),
-    ("011", "PY101-2026-09-19-T1"),
-    ("008", "DS102-2026-09-24-T1"),
-    ("007", "MA103-2026-09-25"),
+    ("003", "PY101-2026-09-09"),
+    ("011", "PY101-2026-09-12-T1"),
+    ("008", "DS102-2026-09-17-T1"),
+    ("007", "MA103-2026-09-18"),
 ]
 
 SEED_SOURCE = "seed_demo"

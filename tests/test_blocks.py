@@ -302,3 +302,109 @@ class TestUpgradeOldDatabase(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestEditBlock(unittest.TestCase):
+    """Edit block: block B1-2627 (07/09 to 25/09/2026) with course PY101 for the whole block."""
+
+    def setUp(self):
+        """Create the block, PY101 with its 15 class days, and student 001 enrolled."""
+        self.connection = database.get_connection(TEST_DB_PATH)
+        database.create_tables(self.connection)
+        database.add_block(self.connection, "B1-2627", "Block 1, 2026-27", "2026-09-07")
+        database.create_course(self.connection, "PY101", "Programming with Python", "B1-2627")
+        database.add_student(self.connection, "001", "Nadia Hirwa")
+        database.enroll_student(self.connection, "001", "PY101")
+
+    def tearDown(self):
+        """Close the database after each test."""
+        self.connection.close()
+
+    def class_dates(self, course_code="PY101"):
+        """Return the dates of a course's sessions, in order."""
+        dates = []
+        for session in database.get_sessions_for_course(self.connection, course_code):
+            dates.append(session["session_date"])
+        return dates
+
+    def test_rename_only(self):
+        """Edit block: a new name with the same start changes nothing else."""
+        result = database.change_block(self.connection, "B1-2627", "First block", "2026-09-07")
+
+        block = database.get_block(self.connection, "B1-2627")
+        self.assertEqual(block["block_name"], "First block")
+        self.assertEqual((result["added"], result["removed"]), (0, 0))
+        self.assertEqual(len(self.class_dates()), 15)
+
+    def test_move_one_week_earlier(self):
+        """Edit block: start 31/08/2026 gives 31/08 to 18/09; PY101 follows, with 5 class days
+        added (31/08 to 04/09) and 5 removed (21/09 to 25/09)."""
+        result = database.change_block(
+            self.connection, "B1-2627", "Block 1, 2026-27", "2026-08-31"
+        )
+
+        block = database.get_block(self.connection, "B1-2627")
+        course = database.get_course(self.connection, "PY101")
+        self.assertEqual((block["start_date"], block["end_date"]), ("2026-08-31", "2026-09-18"))
+        self.assertEqual((course["start_date"], course["end_date"]),
+                         ("2026-08-31", "2026-09-18"))
+        self.assertEqual(result, {"end_date": "2026-09-18", "added": 5, "removed": 5})
+        dates = self.class_dates()
+        self.assertEqual((len(dates), dates[0], dates[-1]), (15, "2026-08-31", "2026-09-18"))
+
+    def test_removed_holiday_stays_removed(self):
+        """Edit block: a removed class day still inside the new dates stays removed."""
+        database.delete_session(self.connection, "PY101-2026-09-16")
+
+        database.change_block(self.connection, "B1-2627", "Block 1, 2026-27", "2026-08-31")
+
+        self.assertNotIn("2026-09-16", self.class_dates())
+        self.assertEqual(len(self.class_dates()), 14)
+
+    def test_shorter_course_moves_by_the_same_days(self):
+        """Edit block: a course from 14/09 to 25/09 moves to 07/09 to 18/09."""
+        database.create_course(self.connection, "DS102", "Data Science Basics", "B1-2627",
+                               "2026-09-14", "2026-09-25")
+
+        database.change_block(self.connection, "B1-2627", "Block 1, 2026-27", "2026-08-31")
+
+        course = database.get_course(self.connection, "DS102")
+        self.assertEqual((course["start_date"], course["end_date"]),
+                         ("2026-09-07", "2026-09-18"))
+        self.assertEqual(len(self.class_dates("DS102")), 10)
+
+    def test_start_must_be_a_monday(self):
+        """BR-18: a Tuesday start is refused and nothing changes."""
+        with self.assertRaises(ValueError) as caught:
+            database.change_block(self.connection, "B1-2627", "Block 1, 2026-27", "2026-09-01")
+
+        self.assertIn("must start on a Monday", str(caught.exception))
+        self.assertEqual(database.get_block(self.connection, "B1-2627")["start_date"],
+                         "2026-09-07")
+
+    def test_records_outside_are_refused(self):
+        """Edit block: a saved record on 25/09 would fall outside 31/08 to 18/09, so the move
+        is refused and nothing changes (block, course, class days)."""
+        database.record_attendance(self.connection, "001", "PY101-2026-09-25", "Present")
+
+        with self.assertRaises(ValueError) as caught:
+            database.change_block(self.connection, "B1-2627", "New name", "2026-08-31")
+
+        self.assertIn("1 saved attendance record(s) in PY101", str(caught.exception))
+        block = database.get_block(self.connection, "B1-2627")
+        self.assertEqual((block["block_name"], block["start_date"]),
+                         ("Block 1, 2026-27", "2026-09-07"))
+        self.assertEqual(database.get_course(self.connection, "PY101")["start_date"],
+                         "2026-09-07")
+        self.assertEqual(self.class_dates()[-1], "2026-09-25")
+
+    def test_enrollment_dates_outside_are_refused(self):
+        """Edit block: 001 joins PY101 on 21/09, after the new end 18/09, so it is refused."""
+        database.update_enrollment_dates(self.connection, "001", "PY101", "2026-09-21", None)
+
+        with self.assertRaises(ValueError) as caught:
+            database.change_block(self.connection, "B1-2627", "Block 1, 2026-27", "2026-08-31")
+
+        self.assertIn("1 enrollment(s) in PY101", str(caught.exception))
+        self.assertEqual(database.get_block(self.connection, "B1-2627")["start_date"],
+                         "2026-09-07")

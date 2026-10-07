@@ -53,6 +53,14 @@ BLOCK_ID_ERROR = (
     "Invalid block ID. Expected 2 to 10 letters, digits or hyphens (for example B1-2627)."
 )
 BLOCK_NAME_ERROR = "Invalid block name. Expected 1 to 80 characters."
+BLOCK_RECORDS_OUTSIDE_ERROR = (
+    "Block {} cannot run {}: {} saved attendance record(s) in {} would fall outside "
+    "the new dates. Delete them first, or choose another start date."
+)
+BLOCK_ENROLLMENTS_OUTSIDE_ERROR = (
+    "Block {} cannot run {}: {} enrollment(s) in {} have dates outside the new period. "
+    "Change them in the student profiles first."
+)
 BLOCK_START_ERROR = "Invalid block start. A block must start on a Monday; {} is a {}."
 BLOCK_EXISTS_ERROR = "Block {} already exists. Enter a different block ID."
 BLOCK_IN_USE_ERROR = (
@@ -347,6 +355,19 @@ def normalize_block_id(block_id):
             return None
 
     return block_id.upper()
+
+
+def shift_date(date_text, days):
+    """Return a 'YYYY-MM-DD' date moved by a number of days (negative moves earlier)."""
+    moved = datetime.strptime(date_text, DATE_FORMAT) + timedelta(days=days)
+    return moved.strftime(DATE_FORMAT)
+
+
+def days_between(first_date, second_date):
+    """Return how many days second_date is after first_date ('YYYY-MM-DD' texts)."""
+    first = datetime.strptime(first_date, DATE_FORMAT)
+    second = datetime.strptime(second_date, DATE_FORMAT)
+    return (second - first).days
 
 
 def is_monday(date_text):

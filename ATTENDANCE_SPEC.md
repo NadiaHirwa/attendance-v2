@@ -229,7 +229,7 @@ The separate "Edit & Delete" sub-tab is **removed**. Everything about a thing li
 
 | Sub-tab | Contains |
 |---|---|
-| **Blocks & Courses** | Create block (start Monday → end calculated). Create course in a block (dates default to the block; optional narrower period). List of blocks with their courses. Per course: rename, change period (inside block, class days regenerate), enrolled students, delete (rules from FR-23). Delete block only when it has no courses. |
+| **Blocks & Courses** | Create block (start Monday → end calculated). **Edit block** (name and start date; the courses move with it). Create course in a block (dates default to the block; optional narrower period). List of blocks with their courses. Per course: rename, change period (inside block, class days regenerate), enrolled students, delete (rules from FR-23). Delete block only when it has no courses. |
 | **Students** | Search first. Selecting a student opens a **student profile**: courses with enrollment period, attendance counts, rate, completeness, **deducted marks per course**, rename, enroll / un-enroll, late start or early leave, delete. Below: Add student. |
 | **Class days & Tutorials** | Pick a course: list of class days (DD/MM/YYYY, weekday) and tutorials. Add tutorial (date inside course period). Remove a class day or tutorial (holiday), with confirmation and record count. |
 | **Record attendance** | Pick block → course → day. **Defaults to today** if today is a class day. Button **"Mark all Present"**, then change the exceptions. Statuses as before. |
@@ -324,6 +324,7 @@ Decisions made while building, where the sections above did not say what to do.
 | FR-27 to FR-31 | **[V3]** Numbered one up from the tutor-feedback draft, because FR-26 was already used (see the change log). |
 | BR-19, FR-03 | **[V3, Stage 2]** Create course: the dates default to the block. An optional **"Shorter period"** checkbox narrows them inside the block at creation (the date inputs are limited to the block), and class days are generated for that period only. |
 | FR-23 | **[V3, Stage 2] Delete course** replaces the Version 2 "only when it has no sessions and no enrolled students" rule (class days are generated, so every course has sessions). It previews the counts of class days, tutorials, enrollments and attendance records, needs the "I understand this cannot be undone" tick, and deletes everything in one transaction. |
+| Section 6.1, BR-18, BR-19 | **Edit block** (`database.change_block`): change the name and the start date (a Monday; the end is calculated). The block's courses move with it: a course covering the whole block covers the whole new block; a shorter course keeps its length and moves by the same number of days. Class days are regenerated like "Change course dates" (`database.move_course_period`): days in both the old and the new period are untouched, so a removed holiday stays removed. Everything is checked first and saved in one transaction; it is refused, with nothing changed, if saved attendance or an enrollment's dates would fall outside a course's new period. Attendance is never moved to another date. |
 | Section 6.1 | **[V3, Stage 2] Delete block:** only when it has no courses; otherwise an error says how many courses must be deleted first. |
 | BR-20, BR-21 | **[V3, Stage 2] Remove a class day or tutorial** (for example a holiday): previews the number of attendance records it deletes and needs the same tick. |
 | FR-07 | **[V3, Stage 2]** Record attendance: pick block → course → day; the day defaults to today when today is a class day of that course. **"Mark all Present"** fills only the students who have no status yet (a saved status is never overwritten), then the exceptions are changed and saved. "Delete one attendance record" is in this sub-tab, for the chosen day. |
@@ -355,7 +356,7 @@ Replaces the Version 2 demo data (2 courses, 4 sessions each; totals 63 Present 
 505 expected, 477 Present, 10 Late, 4 Excused, 10 Absent, 4 Unknown, attendance 97.99%,
 completeness 99.21%.
 
-- Block `B1-2627`, "Block 1, 2026-27", 07/09/2026 to 25/09/2026.
+- Block `B1-2627`, "Block 1, 2026-27", **31/08/2026 to 18/09/2026** (the real first block; until 07/10/2026 the demo started on 07/09/2026, one week later, with the same counts and rates).
 - 3 courses: PY101 Programming with Python, DS102 Data Science Basics, MA103 Mathematics for Data Science.
 - 12 students. Most in all three courses, a few in two, one **late joiner** (from week 2) and one **early leaver**.
 - 15 class days per course, **one removed as a holiday** in one course, and **2 tutorials per course**.

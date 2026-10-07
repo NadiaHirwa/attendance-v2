@@ -356,6 +356,85 @@ def get_blocks(connection):
     ).fetchall()
 
 
+def plan_block_move(connection, block_id, start_date):
+    """Return the new (start, end) of each course in a block that moves to start_date.
+
+    A course that covers the whole block covers the whole new block; a shorter course
+    keeps its length and moves by the same number of days, so it stays inside.
+    Returns a list of (course row, new start, new end).
+    """
+    block = get_block(connection, block_id)
+    new_end = validation.calculate_block_end(start_date)
+    days = validation.days_between(block["start_date"], start_date)
+
+    plans = []
+    for course in get_block_courses(connection, block_id):
+        course_start = course["start_date"]
+        course_end = course["end_date"]
+        if course_start is None or course_start == block["start_date"]:
+            new_start = start_date
+        else:
+            new_start = validation.shift_date(course_start, days)
+        if course_end is None or course_end == block["end_date"]:
+            new_end_date = new_end
+        else:
+            new_end_date = validation.shift_date(course_end, days)
+        plans.append((course, new_start, new_end_date))
+    return plans
+
+
+def change_block(connection, block_id, block_name, start_date):
+    """Change a block's name and start date; its courses move with it (BR-18, BR-19).
+
+    The end is calculated (BR-18). Raises ValueError, and changes nothing, if the start
+    is not a Monday, or if saved attendance or an enrollment's dates would fall outside
+    a course's new period. Otherwise one transaction saves the block, the courses'
+    dates and their regenerated class days (see move_course_period).
+    Returns {"end_date": ..., "added": ..., "removed": ...}.
+    """
+    if not validation.is_monday(start_date):
+        raise ValueError(validation.BLOCK_START_ERROR.format(
+            validation.format_date(start_date), validation.weekday_name(start_date)
+        ))
+
+    end_date = validation.calculate_block_end(start_date)
+    new_period = validation.describe_course_period(start_date, end_date)
+    plans = plan_block_move(connection, block_id, start_date)
+
+    # Check every course before anything is changed.
+    for course, new_start, new_end in plans:
+        course_code = course["course_code"]
+        enrollments = count_enrollments_outside_period(
+            connection, course_code, new_start, new_end
+        )
+        if enrollments > 0:
+            raise ValueError(validation.BLOCK_ENROLLMENTS_OUTSIDE_ERROR.format(
+                block_id, new_period, enrollments, course_code
+            ))
+        records = count_records_outside_period(connection, course_code, new_start, new_end)
+        if records > 0:
+            raise ValueError(validation.BLOCK_RECORDS_OUTSIDE_ERROR.format(
+                block_id, new_period, records, course_code
+            ))
+
+    added = 0
+    removed = 0
+    with connection:
+        connection.execute(
+            "UPDATE blocks SET block_name = ?, start_date = ?, end_date = ? WHERE block_id = ?",
+            (block_name, start_date, end_date, block_id),
+        )
+        for course, new_start, new_end in plans:
+            counts = move_course_period(
+                connection, course["course_code"], course["start_date"], course["end_date"],
+                new_start, new_end,
+            )
+            added += counts["added"]
+            removed += counts["removed"]
+
+    return {"end_date": end_date, "added": added, "removed": removed}
+
+
 # ---------- Courses in blocks and class days (BR-19, BR-20) ----------
 
 def insert_class_days(connection, course_code, class_days):
@@ -494,6 +573,16 @@ def change_course_period(connection, course_code, start_date, end_date):
             records_lost, course_code
         ))
 
+    with connection:
+        return move_course_period(connection, course_code, old_start, old_end,
+                                  start_date, end_date)
+
+
+def move_course_period(connection, course_code, old_start, old_end, start_date, end_date):
+    """Save a course's new dates and regenerate its class days, inside the caller's
+    transaction (used by change_course_period and change_block). The checks are done
+    by the caller. Returns {"added": ..., "removed": ...}.
+    """
     # Weekdays of the new period that were outside the old period get a class day.
     new_class_days = []
     if start_date is not None and end_date is not None:
@@ -501,22 +590,20 @@ def change_course_period(connection, course_code, start_date, end_date):
             if not validation.is_date_in_period(class_day, old_start, old_end):
                 new_class_days.append(class_day)
 
-    with connection:
-        removed = connection.execute(
-            """
-            DELETE FROM sessions
-            WHERE course_code = ?
-              AND ((? IS NOT NULL AND session_date < ?)
-                   OR (? IS NOT NULL AND session_date > ?))
-            """,
-            (course_code, start_date, start_date, end_date, end_date),
-        ).rowcount
-        insert_class_days(connection, course_code, new_class_days)
-        connection.execute(
-            "UPDATE courses SET start_date = ?, end_date = ? WHERE course_code = ?",
-            (start_date, end_date, course_code),
-        )
-
+    removed = connection.execute(
+        """
+        DELETE FROM sessions
+        WHERE course_code = ?
+          AND ((? IS NOT NULL AND session_date < ?)
+               OR (? IS NOT NULL AND session_date > ?))
+        """,
+        (course_code, start_date, start_date, end_date, end_date),
+    ).rowcount
+    insert_class_days(connection, course_code, new_class_days)
+    connection.execute(
+        "UPDATE courses SET start_date = ?, end_date = ? WHERE course_code = ?",
+        (start_date, end_date, course_code),
+    )
     return {"added": len(new_class_days), "removed": removed}
 
 
