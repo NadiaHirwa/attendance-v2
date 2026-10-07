@@ -3,7 +3,7 @@
 **Before every section:** run `.venv\Scripts\python seed_demo.py`, restart Streamlit, refresh the browser.
 Every row starts from the seed data unless it says otherwise.
 
-✔ = confirmed by running the code (on a copy of the database or by an automated test). Run `.venv\Scripts\python -m unittest`: **301 tests, all OK**.
+✔ = confirmed by running the code (on a copy of the database or by an automated test). Run `.venv\Scripts\python -m unittest`: **308 tests, all OK**.
 
 Dates are shown as **DD/MM/YYYY** everywhere on screen and in downloads (BR-23).
 
@@ -192,7 +192,7 @@ Columns: `course_code, date, student_id, full_name, status`, optional `type` (Cl
 
 | # | Do | Expected |
 |---|---|---|
-| 9.1 | All blocks, all courses | ✔ Five bordered cards: **Attendance rate 97.99%, Completeness 99.21%, Deducted marks 30, Students below threshold 0, Absence alerts 1**. Under them ● Present 477, ● Late 10, ● Excused 4, ● Absent 10, ● Not recorded 4 (dots in the chart colours) and "12 students · 44 class days · 6 tutorials". Caption "Showing: All blocks, All courses, from 31/08/2026 to 18/09/2026." |
+| 9.1 | All blocks, all courses | ✔ Five bordered cards: **Attendance rate 97.99%, Completeness 99.21%, Deducted marks 30, Students below threshold 0, Need attention 2**. Under them ● Present 477, ● Late 10, ● Excused 4, ● Absent 10, ● Not recorded 4 (dots in the chart colours) and "12 students · 44 class days · 6 tutorials". Caption "Showing: All blocks, All courses, from 31/08/2026 to 18/09/2026." |
 | 9.1b | Sidebar with All blocks | ✔ Block, Course and only a **Custom dates** box (no Week box). |
 | 9.1c | Charts with All blocks | ✔ The demo has only one block, so the charts are "Attendance rate by course" and "Recording status by course": PY101 **96.30%**, DS102 **98.63%**, MA103 **99.38%**. |
 | 9.1d | Add a second block with a course, an enrolled student and one record; All blocks | ✔ "Attendance rate by block": one bar per block (B1-2627 97.99%). Choosing a block goes back to one bar per course. |
@@ -206,9 +206,13 @@ Columns: `course_code, date, student_id, full_name, status`, optional `type` (Cl
 | 9.7 | Status filter: keep only Unknown / untick everything | Only grey parts, colours unchanged / info message. |
 | 9.8 | Threshold 75% | ✔ "No students are below 75%." Card: 0. |
 | 9.9 | Threshold 97% | ✔ **002 (90.00%), 009 (96.00%), 011 (96.88%), 010 (96.97%)**, lowest first. Card: **4**. |
-| 9.10 | **Absence alerts**, minimum 2 (or 1) | ✔ Only **009, PY101: current streak 2, longest 2, last absence 18/09/2026**. Card: 1. |
-| 9.11 | Absence alerts, minimum 3 | ✔ "No students have 3 or more absences in a row." Card: 0. |
-| 9.12 | Why isn't 002 an alert? | ✔ 002's longest streak in PY101 is 3 (14-16/09), but the **current** streak is 0 (Present on 17/09 and 18/09). |
+| 9.10 | **Students needing attention**, default rules (2 / 3 / 75 / 10) | ✔ Exactly two rows: **002 PY101** "5 absences · Below 75% (70.59%) · 12 marks lost" (last absence 16/09/2026), then **009 PY101** "Absent the last 2 days" (18/09/2026). Card "Need attention": 2. |
+| 9.11 | Absences at least **6** | ✔ 002's reasons become "Below 75% (70.59%) · 12 marks lost". |
+| 9.11b | Absent the last **1** day | ✔ Only 009 has the recent reason (002 was Present on 17/09 and 18/09). |
+| 9.11c | Attendance rate below **100** | ✔ 002, 009 (88.24%), 010 DS102 (90.00%), 005 MA103 (93.33%), 011 DS102 (93.75%). Pairs with only Lates (001, 004, 006, 012) stay at 100% and are not listed: Late counts as attended. |
+| 9.11d | Rules nobody meets (9 / 9 / 0 / 99) | ✔ "No students need attention with these rules." Card: 0. |
+| 9.11e | Sidebar: B1-2627 → PY101 → Week 3 | ✔ 002 "3 absences · Below 75% (40.00%)" and 009 "Absent the last 2 days": only the filtered days count. |
+| 9.12 | Why is 002 not "absent recently"? | ✔ 002's longest streak in PY101 is 3 (14-16/09), but the **current** streak is 0 (Present on 17/09 and 18/09). |
 | 9.13 | Excused or Unknown between two absences | ✔ Ends the streak: Absent, Excused, Absent = longest 1. |
 | 9.14 | Settings: Late 2, Absent 3 | ✔ The Deducted marks card shows **50** (10 x 2 + 10 x 3). |
 

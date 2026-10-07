@@ -48,9 +48,9 @@ student per course.
 The app opens in the browser with four tabs:
 
 - **Dashboard**: KPI cards (attendance rate, completeness, deducted marks, students below
-  the threshold, absence alerts), then the attendance rate and recording status charts,
+  the threshold, students needing attention), then the attendance rate and recording status charts,
   which drill down from blocks to courses to weeks (or days), the threshold list and the
-  absence alerts.
+  students needing attention (per course, with adjustable alert rules).
 - **Manage Attendance**, in sub-tabs: **Blocks & Courses** (class days are generated),
   **Students** (search, profile, enroll, late start or early leave), **Class days & Tutorials**
   (add tutorials, remove a holiday), **Record attendance** (block → course → day, "Mark all

@@ -35,6 +35,13 @@ CHART_STATUS_COLUMN = "Status"
 CHART_COUNT_COLUMN = "Students"
 CHART_ORDER_COLUMN = "Stack order"
 DEFAULT_STREAK_ALERT = 2
+# "Students needing attention" rules and their defaults (one row per student per course).
+DEFAULT_ATTENTION_RULES = {
+    "recent_absences": 2,   # absent on the last N days in a row (the current streak)
+    "absences": 3,          # total Absent >= A
+    "rate": 75,             # attendance rate < T%
+    "marks": 10,            # deducted marks >= M
+}
 # Deduction columns (BR-22, FR-29). The deductions themselves are settings.
 DEDUCTED_COLUMN = "Deducted marks"
 # The count of missing records in the deductions export, and the flag on screens.
@@ -46,6 +53,8 @@ DATE_COLUMNS = ["Date", "Enrolled from", "Enrolled until", "Last absence", "date
 CURRENT_STREAK_COLUMN = "Current absence streak"
 LONGEST_STREAK_COLUMN = "Longest absence streak"
 LAST_ABSENCE_COLUMN = "Last absence"
+ATTENTION_COLUMNS = ["Student ID", "Full name", "Course", "Absences", "Attendance rate",
+                     DEDUCTED_COLUMN, LAST_ABSENCE_COLUMN, "Reasons"]
 # Order of the parts of each stacked bar, from the bottom up.
 STATUS_ORDER = [PRESENT, LATE, EXCUSED, ABSENT, UNKNOWN]
 
@@ -262,14 +271,14 @@ def calculate_dashboard_metrics(frame):
     return metrics
 
 
-def calculate_kpis(frame, late_deduction, absent_deduction, threshold, streak_minimum):
+def calculate_kpis(frame, late_deduction, absent_deduction, threshold, rules):
     """Return the numbers of the Dashboard cards (Stage 7, FR-13).
 
     Rates and status counts as in calculate_rates(); 'deducted' is the total deducted
     marks with the current settings (BR-22); 'below_threshold' counts students whose
-    rate is strictly below the threshold (FR-15); 'alerts' counts the student-course
-    rows whose current absence streak reaches streak_minimum (FR-21); 'students',
-    'class_days' and 'tutorials' count what the filters show.
+    rate is strictly below the threshold (FR-15); 'need_attention' counts the distinct
+    students in the "Students needing attention" table for the rules (FR-21);
+    'students', 'class_days' and 'tutorials' count what the filters show.
     """
     kpis = summarize_frame(frame)
     kpis["deducted"] = calculate_deduction(
@@ -278,7 +287,8 @@ def calculate_kpis(frame, late_deduction, absent_deduction, threshold, streak_mi
 
     below, no_rate = split_by_threshold(build_student_summary(frame), threshold)
     kpis["below_threshold"] = len(below)
-    kpis["alerts"] = len(find_streak_alerts(build_streak_table(frame), streak_minimum))
+    attention = build_attention_table(frame, late_deduction, absent_deduction, rules)
+    kpis["need_attention"] = attention["Student ID"].nunique()
 
     kpis["students"] = frame["student_id"].nunique()
     sessions = frame.drop_duplicates("session_id")
@@ -286,6 +296,81 @@ def calculate_kpis(frame, late_deduction, absent_deduction, threshold, streak_mi
     kpis["tutorials"] = tutorials
     kpis["class_days"] = len(sessions) - tutorials
     return kpis
+
+
+# ---------- Students needing attention (FR-21, replaces the absence alerts) ----------
+
+def plural(count, word):
+    """Return '1 absence' or '5 absences'."""
+    if count == 1:
+        return f"{count} {word}"
+    return f"{count} {word}s"
+
+
+def find_attention_reasons(absences, rate, marks, current_streak, rules):
+    """Return the reasons a student needs attention in one course, or [] (FR-21).
+
+    rules has 'recent_absences' (N), 'absences' (A), 'rate' (T) and 'marks' (M):
+    absent on the last N days in a row, Absent >= A, rate < T% and deducted >= M.
+    A rate of None (nothing counted yet) is never below the threshold.
+    """
+    reasons = []
+    if current_streak >= rules["recent_absences"]:
+        days = "day" if current_streak == 1 else f"{current_streak} days"
+        reasons.append(f"Absent the last {days}")
+    if absences >= rules["absences"]:
+        reasons.append(plural(absences, "absence"))
+    if rate is not None and rate < rules["rate"]:
+        reasons.append(f"Below {rules['rate']}% ({format_rate(rate)})")
+    if marks >= rules["marks"]:
+        reasons.append(f"{plural(marks, 'mark')} lost")
+    return reasons
+
+
+def build_attention_table(frame, late_deduction, absent_deduction, rules):
+    """Return one row per student per course meeting at least one rule (FR-21).
+
+    Columns: Student ID, Full name, Course, Absences, Attendance rate, Deducted marks,
+    Last absence and Reasons (joined with ' · '). Sorted by the number of reasons
+    (most first), then the lowest rate, then student ID and course. Only the records
+    in frame count, so the sidebar filters are respected.
+    """
+    rows = []
+    for (student_id, course_code), group in frame.groupby(["student_id", "course_code"]):
+        present, late, excused, absent, unknown = count_statuses(group)
+        rate = calculate_rates(present, late, excused, absent, unknown)["attendance_rate"]
+        marks = calculate_deduction(late, absent, late_deduction, absent_deduction)
+        longest, current = calculate_streaks(statuses_in_session_order(group))
+        reasons = find_attention_reasons(absent, rate, marks, current, rules)
+        if not reasons:
+            continue
+        rows.append({
+            "Student ID": student_id,
+            "Full name": group["full_name"].iloc[0],
+            "Course": course_code,
+            "Absences": absent,
+            "Attendance rate": rate,
+            DEDUCTED_COLUMN: marks,
+            LAST_ABSENCE_COLUMN: find_last_absence_date(group),
+            "Reasons": " · ".join(reasons),
+            "reason_count": len(reasons),
+        })
+
+    if not rows:
+        return pd.DataFrame(columns=ATTENTION_COLUMNS)
+
+    table = pd.DataFrame(rows)
+    # A missing rate sorts last; it is never below the threshold anyway.
+    table["sort_rate"] = table["Attendance rate"].fillna(101)
+    table = table.sort_values(
+        ["reason_count", "sort_rate", "Student ID", "Course"],
+        ascending=[False, True, True, True], ignore_index=True,
+    )
+    rates = []
+    for rate in table["Attendance rate"]:
+        rates.append(format_rate(rate))
+    table["Attendance rate"] = rates
+    return table[ATTENTION_COLUMNS]
 
 
 # ---------- Weeks (Stage 7) ----------

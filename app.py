@@ -28,7 +28,13 @@ ALL_STUDENTS = "All students"
 ALL_BLOCKS = analytics.ALL_BLOCKS
 ALL_WEEKS = "All weeks"
 THRESHOLD_KEY = "threshold"
-STREAK_KEY = "streak_minimum"
+# Widget keys of the "Alert rules" inputs, by rule name (see analytics.DEFAULT_ATTENTION_RULES).
+ATTENTION_KEYS = {
+    "recent_absences": "attention_recent",
+    "absences": "attention_absences",
+    "rate": "attention_rate",
+    "marks": "attention_marks",
+}
 # The status names under the Dashboard cards, in the order of STATUS_COLORS.
 STATUS_DOT_LABELS = ["Present", "Late", "Excused", "Absent", "Not recorded"]
 # Every date input shows dates as DD/MM/YYYY, like the rest of the app (BR-23).
@@ -1881,12 +1887,12 @@ def show_status_counts(rates):
 def show_kpi_cards(filtered_records, settings):
     """Show the Dashboard cards, the status counts and what is counted (FR-13, Stage 7).
 
-    The threshold and streak length come from their widgets further down the page.
+    The threshold and the alert rules come from their widgets further down the page.
     """
     threshold = st.session_state.get(THRESHOLD_KEY, analytics.DEFAULT_THRESHOLD)
-    minimum = st.session_state.get(STREAK_KEY, analytics.DEFAULT_STREAK_ALERT)
+    rules = get_attention_rules()
     kpis = analytics.calculate_kpis(
-        filtered_records, settings["late"], settings["absent"], threshold, minimum
+        filtered_records, settings["late"], settings["absent"], threshold, rules
     )
 
     cards = [
@@ -1898,8 +1904,8 @@ def show_kpi_cards(filtered_records, settings):
          f"Total: Late x {settings['late']} + Absent x {settings['absent']}"),
         ("Students below threshold", kpis["below_threshold"],
          f"Attendance rate below {threshold}% (slider below)"),
-        ("Absence alerts", kpis["alerts"],
-         f"Current absence streak of {minimum} or more"),
+        ("Need attention", kpis["need_attention"],
+         "Students meeting at least one alert rule in a course (table below)"),
     ]
     columns = st.columns(len(cards))
     for column, (label, value, help_text) in zip(columns, cards):
@@ -2028,36 +2034,73 @@ def show_threshold_list(filtered_records):
         st.dataframe(analytics.format_summary_table(no_rate), hide_index=True, width="stretch")
 
 
-def show_absence_alerts(filtered_records):
-    """List students whose current absence streak reaches a chosen length (FR-21)."""
-    st.subheader("Absence alerts")
+def get_attention_rules():
+    """Return the alert rules from their inputs, or the defaults before they are drawn."""
+    rules = {}
+    for name, key in ATTENTION_KEYS.items():
+        rules[name] = int(st.session_state.get(key, analytics.DEFAULT_ATTENTION_RULES[name]))
+    return rules
 
-    minimum = st.number_input(
-        "Alert when current streak is at least", min_value=1,
-        value=analytics.DEFAULT_STREAK_ALERT, step=1, key=STREAK_KEY,
+
+def show_students_needing_attention(filtered_records, settings):
+    """List each student and course that meets at least one alert rule (FR-21).
+
+    Replaces the absence alerts. The rules are set in the "Alert rules" row; the
+    deducted marks use the current settings, and the sidebar filters are respected.
+    """
+    st.subheader("Students needing attention")
+
+    st.markdown("**Alert rules**")
+    defaults = analytics.DEFAULT_ATTENTION_RULES
+    columns = st.columns(4)
+    columns[0].number_input(
+        "Absent the last N days in a row", min_value=1, step=1,
+        value=defaults["recent_absences"], key=ATTENTION_KEYS["recent_absences"],
+    )
+    columns[1].number_input(
+        "Absences at least", min_value=1, step=1,
+        value=defaults["absences"], key=ATTENTION_KEYS["absences"],
+    )
+    columns[2].number_input(
+        "Attendance rate below (%)", min_value=0, max_value=100, step=1,
+        value=defaults["rate"], key=ATTENTION_KEYS["rate"],
+    )
+    columns[3].number_input(
+        "Deducted marks at least", min_value=1, step=1,
+        value=defaults["marks"], key=ATTENTION_KEYS["marks"],
     )
 
-    streak_table = analytics.build_streak_table(filtered_records)
-    alerts = analytics.find_streak_alerts(streak_table, minimum)
+    table = analytics.build_attention_table(
+        filtered_records, settings["late"], settings["absent"], get_attention_rules()
+    )
+    if table.empty:
+        st.success("No students need attention with these rules.")
+        return
 
-    if alerts.empty:
-        st.success(f"No students have {minimum} or more absences in a row.")
-    else:
-        st.dataframe(analytics.format_date_columns(alerts), hide_index=True, width="stretch")
+    st.dataframe(
+        analytics.format_date_columns(table), hide_index=True, width="stretch",
+        column_config={"Reasons": st.column_config.TextColumn("Reasons", width="large")},
+    )
+    st.caption(
+        "One row per student per course. Sorted by the number of reasons, then the lowest "
+        f"attendance rate. {describe_deduction_rule(settings)}"
+    )
 
 
 def show_dashboard_tab(connection, filtered_records, filter_text, view):
-    """Show the Dashboard tab: cards, drill-down charts, threshold list and alerts."""
+    """Show the Dashboard tab: cards, drill-down charts, threshold list and the students
+    needing attention."""
     if not has_data_to_show(filtered_records, filter_text):
         return
 
-    show_kpi_cards(filtered_records, database.get_deduction_settings(connection))
+    settings = database.get_deduction_settings(connection)
+    show_kpi_cards(filtered_records, settings)
     st.divider()
     show_drilldown_charts(filtered_records, view)
     st.divider()
     show_threshold_list(filtered_records)
     st.divider()
-    show_absence_alerts(filtered_records)
+    show_students_needing_attention(filtered_records, settings)
 
 
 # ---------- FR-16 and FR-17: Reports ----------

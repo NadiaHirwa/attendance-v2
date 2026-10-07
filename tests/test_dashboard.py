@@ -218,15 +218,17 @@ class TestKpiCards(SeedTestCase):
 
     def test_seed_kpis(self):
         """Stage 7: the seed cards. Deducted marks = 10 Late x 1 + 10 Absent x 2 = 30.
-        Nobody is below 75%. One alert: 009 in PY101 (current streak 2).
-        12 students, 44 class days (15 + 14 + 15) and 6 tutorials."""
-        kpis = analytics.calculate_kpis(self.records, 1, 2, 75, 2)
+        Nobody is below 75%. Two students need attention with the default rules: 002 and
+        009 (both in PY101). 12 students, 44 class days (15 + 14 + 15) and 6 tutorials."""
+        kpis = analytics.calculate_kpis(
+            self.records, 1, 2, 75, analytics.DEFAULT_ATTENTION_RULES
+        )
 
         self.assertEqual(analytics.format_rate(kpis["attendance_rate"]), "97.99%")
         self.assertEqual(analytics.format_rate(kpis["completeness"]), "99.21%")
         self.assertEqual(kpis["deducted"], 30)
         self.assertEqual(kpis["below_threshold"], 0)
-        self.assertEqual(kpis["alerts"], 1)
+        self.assertEqual(kpis["need_attention"], 2)
         self.assertEqual(
             (kpis["present"], kpis["late"], kpis["excused"], kpis["absent"], kpis["unknown"]),
             (477, 10, 4, 10, 4),
@@ -235,12 +237,106 @@ class TestKpiCards(SeedTestCase):
 
     def test_kpis_follow_the_settings_and_slider(self):
         """Stage 7: Late x 2 + Absent x 3 = 50. At 97%: 002 (90.00%), 009 (96.00%),
-        011 (96.88%) and 010 (96.97%) are below. A streak of 3 has no alert."""
-        kpis = analytics.calculate_kpis(self.records, 2, 3, 97, 3)
+        011 (96.88%) and 010 (96.97%) are below. With "absent the last 3 days", 009 no
+        longer needs attention; 002 still does (5 absences, 70.59%, 2 x 2 + 5 x 3 = 19 marks)."""
+        rules = dict(analytics.DEFAULT_ATTENTION_RULES, recent_absences=3)
+        kpis = analytics.calculate_kpis(self.records, 2, 3, 97, rules)
 
         self.assertEqual(kpis["deducted"], 50)
         self.assertEqual(kpis["below_threshold"], 4)
-        self.assertEqual(kpis["alerts"], 0)
+        self.assertEqual(kpis["need_attention"], 1)
+
+
+class TestStudentsNeedingAttention(SeedTestCase):
+    """FR-21 (replaces the absence alerts): one row per student per course, by hand.
+
+    In the seed, the pairs with a Late, an Absent or a current streak are:
+    001 PY101 (1 L, 100%), 002 PY101 (2 L, 5 A, 70.59%, 12 marks, streak 0),
+    004 MA103 (1 L), 005 MA103 (1 A, 93.33%), 006 DS102 (3 L), 009 PY101 (1 L, 2 A,
+    88.24%, 5 marks, absent on 17/09 and 18/09: streak 2), 010 DS102 (1 A, 90.00%),
+    011 DS102 (1 L, 1 A, 93.75%), 012 PY101 (1 L). Late counts as attended in the rate.
+    """
+
+    def attention(self, **changes):
+        """Return the table for the default rules with some changed (deductions 1 and 2)."""
+        rules = dict(analytics.DEFAULT_ATTENTION_RULES, **changes)
+        return analytics.build_attention_table(self.records, 1, 2, rules)
+
+    def pairs(self, table):
+        """Return the (student, course) pairs of the table, in order."""
+        return list(zip(table["Student ID"], table["Course"]))
+
+    def test_defaults(self):
+        """Defaults (N 2, A 3, T 75, M 10): exactly 002 PY101 with three reasons, then 009
+        PY101, absent the last 2 days."""
+        table = self.attention()
+
+        self.assertEqual(list(table.columns), [
+            "Student ID", "Full name", "Course", "Absences", "Attendance rate",
+            "Deducted marks", "Last absence", "Reasons",
+        ])
+        self.assertEqual(self.pairs(table), [("002", "PY101"), ("009", "PY101")])
+        first = table.iloc[0]
+        self.assertEqual(first["Reasons"], "5 absences · Below 75% (70.59%) · 12 marks lost")
+        self.assertEqual((first["Absences"], first["Attendance rate"], first["Deducted marks"]),
+                         (5, "70.59%", 12))
+        self.assertEqual(first["Last absence"], "2026-09-16")
+        second = table.iloc[1]
+        self.assertEqual(second["Reasons"], "Absent the last 2 days")
+        self.assertEqual(second["Last absence"], "2026-09-18")
+
+    def test_more_absences_needed(self):
+        """A = 6: 002 has only 5 absences, so that reason goes; 002 keeps two reasons."""
+        table = self.attention(absences=6)
+
+        self.assertEqual(self.pairs(table), [("002", "PY101"), ("009", "PY101")])
+        self.assertEqual(table.iloc[0]["Reasons"], "Below 75% (70.59%) · 12 marks lost")
+
+    def test_absent_last_day(self):
+        """N = 1: only 009 was absent on their last day; 002 was Present on 17/09 and 18/09."""
+        table = self.attention(recent_absences=1)
+
+        recent = table[table["Reasons"].str.contains("Absent the last")]
+        self.assertEqual(self.pairs(recent), [("009", "PY101")])
+        self.assertEqual(recent.iloc[0]["Reasons"], "Absent the last 2 days")
+
+    def test_threshold_100(self):
+        """T = 100: every pair with an Absent is below 100%. Pairs with only Lates stay at
+        100% (Late counts as attended), so they are not listed. 002 first (three reasons),
+        then the rest by lowest rate: 009 88.24%, 010 90.00%, 005 93.33%, 011 93.75%."""
+        table = self.attention(rate=100)
+
+        self.assertEqual(self.pairs(table), [
+            ("002", "PY101"), ("009", "PY101"), ("010", "DS102"), ("005", "MA103"),
+            ("011", "DS102"),
+        ])
+        self.assertEqual(table.iloc[1]["Reasons"], "Absent the last 2 days · Below 100% (88.24%)")
+        self.assertNotIn("006", list(table["Student ID"]))
+
+    def test_marks_follow_the_settings(self):
+        """M = 10 with Late x 2 + Absent x 3: 002 loses 19 marks; 009 loses 8."""
+        rules = dict(analytics.DEFAULT_ATTENTION_RULES, recent_absences=3, rate=0)
+        table = analytics.build_attention_table(self.records, 2, 3, rules)
+
+        self.assertEqual(self.pairs(table), [("002", "PY101")])
+        self.assertEqual(table.iloc[0]["Reasons"], "5 absences · 19 marks lost")
+
+    def test_filters_are_respected(self):
+        """Only the filtered records count: in week 3 (14/09 to 20/09) 002 PY101 has 3
+        absences (14, 15, 16/09) and 009 is still absent on 17/09 and 18/09."""
+        week_3 = analytics.filter_records(self.records, "PY101", "2026-09-14", "2026-09-20")
+        rules = analytics.DEFAULT_ATTENTION_RULES
+        table = analytics.build_attention_table(week_3, 1, 2, rules)
+
+        self.assertEqual(self.pairs(table), [("002", "PY101"), ("009", "PY101")])
+        self.assertEqual(table.iloc[0]["Reasons"], "3 absences · Below 75% (40.00%)")
+
+    def test_nobody(self):
+        """Rules nobody meets give an empty table with the same columns."""
+        table = self.attention(recent_absences=9, absences=9, rate=0, marks=99)
+
+        self.assertTrue(table.empty)
+        self.assertIn("Reasons", list(table.columns))
 
 
 class TestNoSessionIds(SeedTestCase):
