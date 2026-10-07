@@ -28,7 +28,7 @@ ALL_STUDENTS = "All students"
 ALL_BLOCKS = analytics.ALL_BLOCKS
 ALL_WEEKS = "All weeks"
 THRESHOLD_KEY = "threshold"
-# Widget keys of the "Alert rules" inputs, by rule name (see analytics.DEFAULT_ATTENTION_RULES).
+# Widget keys of the "Warning signs" inputs, by rule name (see analytics.DEFAULT_ATTENTION_RULES).
 ATTENTION_KEYS = {
     "recent_absences": "attention_recent",
     "absences": "attention_absences",
@@ -2045,29 +2045,40 @@ def get_attention_rules():
 def show_students_needing_attention(filtered_records, settings):
     """List each student and course that meets at least one alert rule (FR-21).
 
-    Replaces the absence alerts. The rules are set in the "Alert rules" row; the
+    Replaces the absence alerts. The rules are set in the "Warning signs" row; the
     deducted marks use the current settings, and the sidebar filters are respected.
     """
     st.subheader("Students needing attention")
+    st.caption(
+        "A student is listed in a course when at least one warning sign below applies. "
+        "Change the numbers to make the warnings stricter or looser."
+    )
 
-    st.markdown("**Alert rules**")
+    st.markdown("**Warning signs**")
     defaults = analytics.DEFAULT_ATTENTION_RULES
     columns = st.columns(4)
     columns[0].number_input(
         "Absent the last N days in a row", min_value=1, step=1,
         value=defaults["recent_absences"], key=ATTENTION_KEYS["recent_absences"],
+        help="Missing class right now: absent on the most recent N class days or tutorials "
+             "of the course.",
     )
     columns[1].number_input(
         "Absences at least", min_value=1, step=1,
         value=defaults["absences"], key=ATTENTION_KEYS["absences"],
+        help="Too many absences in total in the course.",
     )
     columns[2].number_input(
         "Attendance rate below (%)", min_value=0, max_value=100, step=1,
         value=defaults["rate"], key=ATTENTION_KEYS["rate"],
+        help="(Present + Late) / (Present + Late + Absent) in the course.",
     )
+    # The tooltip shows the current settings, so it stays true when they change.
     columns[3].number_input(
         "Deducted marks at least", min_value=1, step=1,
         value=defaults["marks"], key=ATTENTION_KEYS["marks"],
+        help=f"Late x {settings['late']} + Absent x {settings['absent']} in the course, "
+             "using the Settings values.",
     )
 
     table = analytics.build_attention_table(
